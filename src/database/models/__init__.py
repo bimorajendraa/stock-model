@@ -23,7 +23,15 @@ from src.database.models.fundamentals import (
     FinancialStatementRaw,
 )
 from src.database.models.macro import IndustrySeries, MacroSeries
-from src.database.models.market import CorporateAction, Dividend, MarketPriceClean, MarketPriceRaw
+from src.database.models.market import (
+    CompanyProviderSymbol,
+    CorporateAction,
+    Dividend,
+    MarketDataReconciliation,
+    MarketPriceClean,
+    MarketPriceQuarantine,
+    MarketPriceRaw,
+)
 from src.database.models.ml import (
     ModelVersion,
     Prediction,
@@ -39,6 +47,7 @@ __all__ = [
     "Alert",
     "Company",
     "CompanyAlias",
+    "CompanyProviderSymbol",
     "CorporateAction",
     "DataQualityResult",
     "DataSourceRegistry",
@@ -49,7 +58,9 @@ __all__ = [
     "FundamentalFeature",
     "IndustrySeries",
     "MacroSeries",
+    "MarketDataReconciliation",
     "MarketPriceClean",
+    "MarketPriceQuarantine",
     "MarketPriceRaw",
     "ModelFeatures",
     "ModelVersion",

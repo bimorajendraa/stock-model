@@ -19,10 +19,12 @@ class OHLCVBar:
     the adapter so provenance travels with the whole bar, not per-field."""
 
     __slots__ = (
+        "adjusted_close",
         "close",
         "high",
         "low",
         "open",
+        "provider_adjustment_status",
         "trade_date",
         "transaction_frequency",
         "transaction_value",
@@ -39,6 +41,8 @@ class OHLCVBar:
         volume: int | None,
         transaction_value: float | None = None,
         transaction_frequency: int | None = None,
+        adjusted_close: float | None = None,
+        provider_adjustment_status: str | None = None,
     ) -> None:
         self.trade_date = trade_date
         self.open = open
@@ -48,6 +52,13 @@ class OHLCVBar:
         self.volume = volume
         self.transaction_value = transaction_value
         self.transaction_frequency = transaction_frequency
+        # close/open/high/low above are always RAW -- never overwritten with
+        # an adjusted value. adjusted_close is the provider's own adjusted
+        # close (e.g. yfinance's "Adj Close"), kept separate (spec: "Jangan
+        # kehilangan harga mentah karena seluruh proses adjustment dilakukan
+        # otomatis oleh library").
+        self.adjusted_close = adjusted_close
+        self.provider_adjustment_status = provider_adjustment_status
 
 
 class CompanyRecord:
