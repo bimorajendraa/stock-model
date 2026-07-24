@@ -9,22 +9,34 @@ dashboard. See the full spec context in `docs/`.
 **This is a research/decision-support tool, not a trading system and not a
 guarantee of profit.** See `docs/risk_and_limitations.md`.
 
-## Status: Tahap 1 (project scaffold)
+## Status: Tahap 2 in progress (market data)
 
-What exists right now:
-- Full repository structure (`src/`, `apps/`, per `docs/architecture.md`).
-- Database schema (29 tables) + Alembic migrations, with mandatory
-  source-lineage columns on every fact table (`docs/database_schema.md`).
-- Abstract provider interfaces for market/fundamentals/macro/industry/news
-  data (`src/data_sources/*/base.py`) -- no concrete adapters yet.
-- A minimal FastAPI app with a `/api/v1/health` endpoint.
-- `docker-compose.yml` running `db` (Postgres + TimescaleDB + pgvector) and
-  `api`.
-- Architecture decision records (`docs/adr/`).
+**Tahap 1 (scaffold)** -- done: full repo structure, 32-table schema +
+Alembic migrations with mandatory source-lineage columns on every fact
+table (`docs/database_schema.md`), provider interfaces, minimal FastAPI
+app, `docker-compose.yml` (`db` + `api`), ADRs (`docs/adr/`).
 
-What does **not** exist yet: real data ingestion, feature engineering,
-models, valuation, recommendations, or the dashboard. See `docs/architecture.md`
-and the phase plan (Tahap 2-7) referenced throughout `docs/adr/`.
+**Tahap 2 (market data)** -- done and verified against real data:
+- Emiten metadata sync: 947 real IDX companies (ticker + name only --
+  see `docs/data_sources.md`'s company-master-data limitation).
+- Multi-provider capability system (`docs/provider_capabilities.md`):
+  Twelve Data (company reference, proven; OHLCV gated behind a live
+  capability probe, not just "key present") with a Yahoo Finance
+  research-only fallback, refused outright in production mode.
+- Real OHLCV ingestion with validation + quarantine
+  (`docs/market_data.md`): 81,709 real rows across 49 companies
+  (2016-2026), idempotency proven, two real bugs found and fixed via live
+  smoke testing (32-bit volume overflow, Postgres parameter-count limit
+  on large backfills).
+- Provisional multi-source corporate actions (`docs/corporate_actions.md`)
+  and cross-provider reconciliation (IDX itself is not reachable -- see
+  `docs/data_sources.md`).
+- CLI: `python -m src.cli ...` (providers check, market smoke-test/
+  backfill/update/reconcile, corporate-actions sync).
+
+**Not yet implemented**: fundamentals/macro/industry/news adapters,
+feature engineering, models, valuation, recommendations, dashboard. See
+`docs/architecture.md` and the phase plan (Tahap 3-7) in `docs/adr/`.
 
 ## Prerequisites
 
@@ -87,11 +99,29 @@ Tests marked `integration` are excluded by default (`addopts` in
 Postgres instead of mocks, to prove things like upsert/lineage/FK behavior
 actually work against the live schema, not just that the ORM calls compile.
 
-## Backfill / pipelines / training / dashboard
+## Market data ingestion (Tahap 2)
+
+```bash
+python -m src.cli providers check              # which provider would be used, and why
+python -m src.cli market smoke-test --count 10 # real ingestion for N real tickers from the DB
+python -m src.cli market backfill --count 50   # full-history backfill
+python -m src.cli market backfill --ticker BBCA
+python -m src.cli market update                # incremental update for all companies
+python -m src.cli market reconcile --count 5   # cross-provider price cross-check
+python -m src.cli corporate-actions sync --ticker BBCA
+```
+
+See `docs/market_data.md`, `docs/provider_capabilities.md`, and
+`docs/corporate_actions.md` for what each command actually does, what it
+depends on (`TWELVE_DATA_API_KEY` for company sync; a real Twelve Data key
+or `MARKET_DATA_PROVIDER=yahoo_finance`/research mode for OHLCV), and known
+limitations.
+
+## Pipelines / feature engineering / training / dashboard (Tahap 3+)
 
 Not yet implemented -- these instructions are added as each phase ships
-(Tahap 2: ingestion; Tahap 3: features; Tahap 4: models; Tahap 5: valuation
-+ recommendations; Tahap 6: API/dashboard/scheduler; Tahap 7: tests/docs/CI).
+(Tahap 3: features; Tahap 4: models; Tahap 5: valuation + recommendations;
+Tahap 6: API/dashboard/scheduler; Tahap 7: tests/docs/CI).
 
 ## Limitations of free/public data sources
 

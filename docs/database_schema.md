@@ -1,6 +1,6 @@
 # Database schema
 
-Status: Tahap 1. Models live in `src/database/models/`; migrations in
+Status: Tahap 2. Models live in `src/database/models/`; migrations in
 `migrations/versions/`. This is a map of what exists and why it's grouped
 this way -- for exact columns, read the model (each file has a docstring
 explaining its design choices).
@@ -17,7 +17,7 @@ explaining its design choices).
 | Module | Tables | Notes |
 |---|---|---|
 | `company.py` | `sector_registry`, `companies`, `company_aliases` | Aliases preserve delisted/renamed issuers to avoid survivorship bias (§3.1) |
-| `market.py` | `market_prices_raw`, `market_prices_clean`, `corporate_actions`, `dividends` | raw vs. clean are separate tables by design (§3.2) |
+| `market.py` | `market_prices_raw`, `market_prices_clean`, `corporate_actions`, `dividends`, `company_provider_symbols`, `market_price_quarantine`, `market_data_reconciliation` | raw vs. clean are separate tables by design (§3.2); Tahap 2 added the last three for multi-provider ticker mapping, failed-validation quarantine, and cross-provider reconciliation |
 | `fundamentals.py` | `financial_statements_raw`, `financial_statement_items`, `financial_ratios` | items are long-format (one row per account); ratios never LLM-computed (§2.15) |
 | `sector.py` | `sector_specific_metrics` | long-format (metric_name/value); which metrics apply per sector is config (§3.5), not schema |
 | `macro.py` | `macro_series`, `industry_series` | economy-wide vs. commodity/index series |
@@ -26,7 +26,14 @@ explaining its design choices).
 | `ml.py` | `model_versions`, `training_runs`, `predictions`, `valuation_results`, `recommendation_results` | payloads are JSONB where shape is horizon/method-dependent |
 | `ops.py` | `data_source_registry`, `pipeline_runs`, `data_quality_results`, `alerts` | `data_source_registry` is what every `source_id` FK points at |
 
-29 tables total, matching spec §4's minimum list.
+32 tables total (29 from spec §4's minimum list + 3 added in Tahap 2 for
+multi-provider market-data operations, see above).
+
+Note: `market_prices_raw.volume`, `market_prices_clean.volume`, and
+`market_data_reconciliation.volume_difference` are `BIGINT`, not the
+SQLAlchemy-default 32-bit `INTEGER` -- some IDX stocks trade daily volumes
+past 2.1 billion shares, which hit a real `NumericValueOutOfRange` error
+during Tahap 2's live smoke test before this was caught.
 
 ## Why long-format for technical/fundamental/sector features
 

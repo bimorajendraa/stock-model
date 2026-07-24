@@ -22,6 +22,42 @@ This platform is a research and decision-support tool. It is **not**:
   multi-year windows will be marked `data tidak mencukupi` until enough
   history accumulates.
 
+## Market data source limitations (Tahap 2)
+
+- **No official IDX source is reachable.** idx.co.id blocks automated
+  access outright (see `docs/data_sources.md`). Company master data,
+  OHLCV, and corporate actions all come from third-party vendors, never
+  IDX itself.
+- **Company master data is thin.** Only ticker and name are populated in
+  bulk from either implemented provider -- sector, subsector, listing
+  date, listing board, and free float are all `NULL` (see
+  `docs/data_sources.md`'s company-master-data section). Anything that
+  would filter/group by sector cannot do so yet.
+- **Yahoo Finance (`yfinance`) is a research-only fallback**, not an
+  official or licensed source -- it scrapes an undocumented Yahoo
+  endpoint outside Yahoo's ToS-sanctioned API. Every row it produces is
+  tagged `usage_restriction=research_only`, and it is refused outright
+  when `MARKET_DATA_USAGE_MODE=production`. See
+  `docs/provider_capabilities.md`.
+- **Twelve Data's XIDX access is unconfirmed at plan level.** The
+  capability probe can detect whether a given key/plan actually returns
+  OHLCV, but this project has not reviewed Twelve Data's ToS for
+  commercial redistribution rights -- Twelve Data rows are tagged
+  `usage_restriction=unspecified`, never `licensed`.
+- **Corporate actions are provisional.** Every ingested action is
+  `verification_status=provider_reported` -- no official-source
+  confirmation workflow exists yet (see `docs/corporate_actions.md`).
+  Conflicting reports from different providers are both kept, not
+  resolved.
+- **Reconciliation is cross-provider, not IDX-verified.** `market
+  reconcile` compares Yahoo Finance against Twelve Data (when both are
+  available) since IDX itself isn't reachable -- see
+  `docs/data_sources.md`.
+- **IDX public holidays are not modeled.** Only weekends are excluded from
+  the trading calendar; an unmodeled holiday shows up as a 1-3-trading-day
+  gap that the freshness logic tolerates rather than misreports as a data
+  failure (see `docs/market_data.md`).
+
 ## Model limitations
 
 - All predictions carry uncertainty (confidence intervals / quantiles) and

@@ -1,6 +1,8 @@
 # Data sources
 
-Status: Tahap 2 in progress -- market-data adapters implemented; fundamentals/
+Status: Tahap 2 -- market-data adapters, capability-aware provider
+selection, and real ingestion implemented and verified against live data
+(81,709 real OHLCV rows across 49 companies, see below); fundamentals/
 macro/industry/news adapters not yet started. This documents the category
 structure and access-tier policy adapters must follow (spec §3, §2.5-10).
 It intentionally does not name specific vendor endpoints/URLs until an
@@ -29,7 +31,7 @@ workaround" problem (`TermsOfServiceViolation` in
 
 | Category | Interface | Spec section | Adapter count requirement |
 |---|---|---|---|
-| Market data (OHLCV, corporate actions) | `src/data_sources/market/base.py::MarketDataProvider` | §3.2 | >=2 adapters -- **done**: `twelve_data.py`, `sectors_app.py` |
+| Market data (OHLCV, corporate actions) | `src/data_sources/market/base.py::MarketDataProvider` | §3.2 | >=2 adapters -- **done**: `twelve_data.py`, `sectors_app.py`, `yahoo_finance.py` (research-only fallback) |
 | Fundamentals (financial statements) | `src/data_sources/fundamentals/base.py::FundamentalsProvider` | §3.3 | prioritize XBRL/structured over PDF/OCR |
 | Macro (BI-Rate, inflation, FX, global macro) | `src/data_sources/macro/base.py::MacroDataProvider` | §3.4 | one per publisher |
 | Industry/sector-specific metrics | `src/data_sources/industry/base.py::IndustryDataProvider` | §3.5 | one per sector where disclosed |
@@ -48,18 +50,32 @@ Findings, so this isn't re-investigated from scratch later:
 - **Stooq** now gates its CSV download behind a JS proof-of-work challenge.
   Solving that programmatically would be exactly the kind of anti-bot
   bypass spec §2.5-6 prohibits. Excluded.
-- **Yahoo Finance / `yfinance`** scrapes an undocumented endpoint outside
-  Yahoo's ToS-sanctioned API. Free and IDX-complete, but legally ambiguous
-  -- not implemented (see ADR discussion in the Tahap 2 conversation; may
-  be revisited if the user explicitly accepts that ambiguity).
+- **Yahoo Finance / `yfinance`** (`src/data_sources/market/yahoo_finance.py`)
+  scrapes an undocumented endpoint outside Yahoo's ToS-sanctioned API --
+  legally gray. Implemented anyway, on explicit user instruction, strictly
+  scoped as a research/dev-only fallback: every row is tagged
+  `usage_restriction=research_only` and it is refused outright in
+  production mode (`MarketDataProviderSelector`, spec section 15 guardrail).
+  See `docs/provider_capabilities.md`.
 - **Twelve Data** (`src/data_sources/market/twelve_data.py`) -- real,
   documented REST API, genuinely free to register (confirmed via live
   error message, not marketing copy). `GET /stocks?exchange=IDX` returns
-  964 real IDX tickers even with the public `demo` key (verified live).
-  `GET /time_series` needs a real (still free) key. access_type:
+  real IDX tickers even with the public `demo` key (947 synced into the
+  database, verified live). `GET /time_series` needs a real (still free)
+  key, and a capability probe (`src/data_sources/market/capability.py`)
+  actually checks whether that key's plan covers XIDX before trusting it
+  -- never assumes "key present" means "usable." access_type:
   `documented_free`. Corporate actions endpoint NOT implemented -- its
   contract wasn't verified before this was written, so it's left as
   `NotImplementedError` rather than guessed.
+- **Twelve Data's own `/stocks` listing has a data quality issue**: it
+  includes `IDXSMC.COM`, which is not a real tradable equity (Yahoo
+  Finance correctly returns 404 for `IDXSMC.COM.JK` -- almost certainly an
+  index/composite identifier misclassified as a company). Surfaced during
+  the Tahap 2 backfill smoke test; handled gracefully (skipped, logged,
+  did not crash the batch), not silently ignored. A reminder that "official
+  API returned it" still isn't the same as "it's real data" -- ingestion
+  code has to handle upstream data quality issues, not just its own.
 - **Sectors.app** (`src/data_sources/market/sectors_app.py`) -- IDX-focused,
   implemented directly against the live OpenAPI schema at
   `https://api.sectors.app/schema/` (docs.sectors.app itself 403s automated
@@ -107,6 +123,25 @@ time).
 `company_sync.sync_companies` never deletes or delists a company just
 because one provider call didn't mention it (spec §3.1 survivorship-bias
 rule) -- it only adds new tickers and updates names of existing ones.
+
+## OHLCV backfill: real results (2026-07-25)
+
+`python -m src.cli market backfill --count 50`, no fixtures, real Yahoo
+Finance data (Twelve Data's `demo` key can't fetch prices, only
+listings -- see `docs/provider_capabilities.md`):
+
+- 49/50 companies succeeded; the 1 failure is `IDXSMC.COM` (see above --
+  not a real equity, not a bug in ingestion).
+- 81,709 OHLCV rows written, spanning 2016-07-25 to 2026-07-24 (the
+  10-year backfill window; several tickers have shorter real history
+  because they IPO'd more recently -- e.g. AADI only goes back to
+  2024-12-05).
+- 5 bars quarantined (real inconsistent OHLC in the source data -- e.g.
+  `high < open` -- correctly caught by `validate_ohlcv_bar` rather than
+  written to `market_prices_raw`).
+- Idempotency verified on the initial 10-ticker smoke test: re-running the
+  same window produced zero row-count growth and updated one bar's values
+  in place.
 
 ## News source weighting (spec §3.6)
 
