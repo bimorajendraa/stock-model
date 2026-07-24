@@ -27,7 +27,7 @@ from src.data_sources.base import (
     SourcedValue,
     ValidationStatus,
 )
-from src.data_sources.market.base import MarketDataProvider, OHLCVBar
+from src.data_sources.market.base import CompanyRecord, MarketDataProvider, OHLCVBar
 
 _BASE_URL = "https://api.twelvedata.com"
 _SOURCE = SourceDescriptor(name="twelve_data", url=_BASE_URL, access_type=AccessType.DOCUMENTED_FREE)
@@ -74,6 +74,25 @@ class TwelveDataMarketProvider(MarketDataProvider):
             period_start=None,
             period_end=None,
             validation_status=ValidationStatus.VALID if tickers else ValidationStatus.INSUFFICIENT,
+        )
+
+    def list_companies(self) -> SourcedValue[list[CompanyRecord]]:
+        now = dt.datetime.now(dt.UTC)
+        payload = self._get("/stocks", {"exchange": "IDX"})
+        rows = payload.get("data", [])
+        companies = [
+            CompanyRecord(ticker=row["symbol"], company_name=row["name"])
+            for row in rows
+            if row.get("symbol") and row.get("name")
+        ]
+        return SourcedValue(
+            value=companies,
+            source=_SOURCE,
+            retrieved_at=now,
+            available_at=now,
+            period_start=None,
+            period_end=None,
+            validation_status=ValidationStatus.VALID if companies else ValidationStatus.INSUFFICIENT,
         )
 
     def get_ohlcv(self, ticker: str, start: dt.date, end: dt.date) -> SourcedValue[list[OHLCVBar]]:

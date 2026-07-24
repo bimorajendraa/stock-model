@@ -31,7 +31,7 @@ from src.data_sources.base import (
     SourcedValue,
     ValidationStatus,
 )
-from src.data_sources.market.base import MarketDataProvider, OHLCVBar
+from src.data_sources.market.base import CompanyRecord, MarketDataProvider, OHLCVBar
 
 _BASE_URL = "https://api.sectors.app"
 _SOURCE = SourceDescriptor(name="sectors_app", url=_BASE_URL, access_type=AccessType.FALLBACK_PROVIDER)
@@ -65,19 +65,28 @@ class SectorsAppMarketProvider(MarketDataProvider):
         except ValueError as exc:
             raise ProviderUnavailableError("sectors_app returned a non-JSON response") from exc
 
-    def list_active_tickers(self) -> SourcedValue[list[str]]:
-        now = dt.datetime.now(dt.UTC)
-        tickers: list[str] = []
+    def _paginate_companies(self) -> list[dict]:
+        # /v2/companies/ (verified against the live schema's
+        # CompanyScreenerItem) returns only {symbol, company_name} per row
+        # in structured-query mode -- richer fields (sector, listing_date,
+        # ...) are filterable but not returned in bulk. See CompanyRecord's
+        # docstring for why this adapter doesn't fabricate the rest.
+        rows: list[dict] = []
         offset = 0
         while True:
             payload = self._get("/v2/companies/", {"limit": _MAX_PAGE_SIZE, "offset": offset})
             results = payload.get("results", []) if isinstance(payload, dict) else []
-            tickers.extend(row["symbol"].removesuffix(".JK") for row in results if row.get("symbol"))
+            rows.extend(results)
             pagination = payload.get("pagination", {}) if isinstance(payload, dict) else {}
             if not pagination.get("has_next"):
                 break
             offset = pagination.get("next_offset", offset + _MAX_PAGE_SIZE)
+        return rows
 
+    def list_active_tickers(self) -> SourcedValue[list[str]]:
+        now = dt.datetime.now(dt.UTC)
+        rows = self._paginate_companies()
+        tickers = [row["symbol"].removesuffix(".JK") for row in rows if row.get("symbol")]
         return SourcedValue(
             value=tickers,
             source=_SOURCE,
@@ -86,6 +95,24 @@ class SectorsAppMarketProvider(MarketDataProvider):
             period_start=None,
             period_end=None,
             validation_status=ValidationStatus.VALID if tickers else ValidationStatus.INSUFFICIENT,
+        )
+
+    def list_companies(self) -> SourcedValue[list[CompanyRecord]]:
+        now = dt.datetime.now(dt.UTC)
+        rows = self._paginate_companies()
+        companies = [
+            CompanyRecord(ticker=row["symbol"].removesuffix(".JK"), company_name=row["company_name"])
+            for row in rows
+            if row.get("symbol") and row.get("company_name")
+        ]
+        return SourcedValue(
+            value=companies,
+            source=_SOURCE,
+            retrieved_at=now,
+            available_at=now,
+            period_start=None,
+            period_end=None,
+            validation_status=ValidationStatus.VALID if companies else ValidationStatus.INSUFFICIENT,
         )
 
     def get_ohlcv(self, ticker: str, start: dt.date, end: dt.date) -> SourcedValue[list[OHLCVBar]]:

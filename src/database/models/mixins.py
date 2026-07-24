@@ -32,7 +32,10 @@ class TimestampMixin:
         TIMESTAMP(timezone=True), server_default="now()", nullable=False
     )
     updated_at: Mapped[dt.datetime] = mapped_column(
-        TIMESTAMP(timezone=True), server_default="now()", onupdate=dt.datetime.utcnow, nullable=False
+        TIMESTAMP(timezone=True),
+        server_default="now()",
+        onupdate=lambda: dt.datetime.now(dt.UTC),
+        nullable=False,
     )
 
 

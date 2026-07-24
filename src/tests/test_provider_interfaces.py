@@ -18,7 +18,7 @@ from src.data_sources.base import (
     SourcedValue,
     ValidationStatus,
 )
-from src.data_sources.market.base import MarketDataProvider, OHLCVBar
+from src.data_sources.market.base import CompanyRecord, MarketDataProvider, OHLCVBar
 
 
 class _FixtureMarketProvider(MarketDataProvider):
@@ -28,6 +28,9 @@ class _FixtureMarketProvider(MarketDataProvider):
 
     def list_active_tickers(self) -> SourcedValue[list[str]]:
         return _wrap(["BBCA", "TLKM"])
+
+    def list_companies(self) -> SourcedValue[list[CompanyRecord]]:
+        return _wrap([CompanyRecord("BBCA", "Bank Central Asia"), CompanyRecord("TLKM", "Telkom Indonesia")])
 
     def get_ohlcv(self, ticker, start, end) -> SourcedValue[list[OHLCVBar]]:
         bars = [OHLCVBar(trade_date=start, open=100, high=101, low=99, close=100, volume=1000)]

@@ -42,6 +42,9 @@ class _FakeProvider(MarketDataProvider):
     def list_active_tickers(self):
         raise NotImplementedError
 
+    def list_companies(self):
+        raise NotImplementedError
+
     def get_ohlcv(self, ticker, start, end):
         now = dt.datetime.now(dt.UTC)
         return SourcedValue(

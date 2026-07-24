@@ -35,6 +35,20 @@ def test_twelve_data_list_active_tickers():
 
 
 @respx.mock
+def test_twelve_data_list_companies():
+    respx.get("https://api.twelvedata.com/stocks", params={"exchange": "IDX"}).mock(
+        return_value=httpx.Response(
+            200,
+            json={"data": [{"symbol": "BBCA", "name": "Bank Central Asia"}, {"symbol": "TLKM", "name": "Telkom"}]},
+        )
+    )
+    provider = TwelveDataMarketProvider(api_key="demo")
+    result = provider.list_companies()
+    assert result.is_usable()
+    assert [(c.ticker, c.company_name) for c in result.value] == [("BBCA", "Bank Central Asia"), ("TLKM", "Telkom")]
+
+
+@respx.mock
 def test_twelve_data_get_ohlcv_sorts_and_parses():
     respx.get("https://api.twelvedata.com/time_series").mock(
         return_value=httpx.Response(
@@ -113,6 +127,24 @@ def test_sectors_app_list_active_tickers_paginates():
     result = provider.list_active_tickers()
     assert result.is_usable()
     assert result.value == ["BBCA", "TLKM"]
+
+
+@respx.mock
+def test_sectors_app_list_companies():
+    respx.get("https://api.sectors.app/v2/companies/", params={"limit": 200, "offset": 0}).mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "results": [{"symbol": "BBCA.JK", "company_name": "PT Bank Central Asia Tbk."}],
+                "pagination": {"has_next": False, "next_offset": None},
+            },
+        )
+    )
+    provider = SectorsAppMarketProvider(api_key="test-key")
+    result = provider.list_companies()
+    assert result.is_usable()
+    assert result.value[0].ticker == "BBCA"
+    assert result.value[0].company_name == "PT Bank Central Asia Tbk."
 
 
 @respx.mock

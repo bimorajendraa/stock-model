@@ -50,6 +50,24 @@ class OHLCVBar:
         self.transaction_frequency = transaction_frequency
 
 
+class CompanyRecord:
+    """Minimal company identity as returned by a market-data vendor's bulk
+    ticker listing. Deliberately thin: sector/subsector/listing_date/
+    listing_board/free_float (spec §3.1) are NOT included here because
+    neither adapter implemented so far returns them in a bulk-friendly way
+    (Sectors.app's screener only returns symbol+company_name per row;
+    per-ticker enrichment would cost one API credit per company). Those
+    fields belong to a proper "data master saham" source -- IDX itself or
+    another official registry -- once one is available; do not backfill
+    them here with guesses."""
+
+    __slots__ = ("company_name", "ticker")
+
+    def __init__(self, ticker: str, company_name: str) -> None:
+        self.ticker = ticker
+        self.company_name = company_name
+
+
 class MarketDataProvider(ABC):
     """Contract every OHLCV / corporate-action adapter must satisfy."""
 
@@ -60,6 +78,11 @@ class MarketDataProvider(ABC):
     @abstractmethod
     def list_active_tickers(self) -> SourcedValue[list[str]]:
         """All currently-listed IDX tickers this provider knows about."""
+
+    @abstractmethod
+    def list_companies(self) -> SourcedValue[list[CompanyRecord]]:
+        """Ticker + company name for every company this provider knows
+        about. See ``CompanyRecord`` for why this is intentionally thin."""
 
     @abstractmethod
     def get_ohlcv(

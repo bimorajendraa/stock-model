@@ -81,6 +81,33 @@ Both implemented adapters raise `ProviderUnavailableError` (not a crash,
 not fabricated data) when their API key is absent or the upstream call
 fails -- ingestion code must catch this and fall back per spec §33.
 
+## Company master data ("data master saham", spec §3.1)
+
+Neither market-data adapter returns sector, subsector, listing date,
+listing board, or free float in a bulk-friendly way:
+
+- Twelve Data's `/stocks` gives ticker + name only.
+- Sectors.app's `/v2/companies/` screener supports filtering/sorting on
+  those richer fields but, per its own schema (`CompanyScreenerItem`),
+  only *returns* `symbol` + `company_name` per row -- getting the rest
+  would mean one `/v2/company/report/{symbol}/` call per company (1 API
+  credit each), impractical without a paid key.
+
+So `MarketDataProvider.list_companies()` (both adapters) and
+`src/ingestion/company_sync.py` are intentionally thin: they sync
+ticker + name only, and never touch sector/subsector/listing_date/etc. --
+those columns stay `NULL` rather than being guessed. A real "data master
+saham" source (properly IDX itself, or another official registry) is
+still needed for that data; company_sync only unblocks
+`ingest_ohlcv`'s FK requirement in the meantime. Verified live
+end-to-end on 2026-07-24: 947 real IDX companies synced from Twelve Data
+into the local database, idempotent on re-run (0 created/updated second
+time).
+
+`company_sync.sync_companies` never deletes or delists a company just
+because one provider call didn't mention it (spec §3.1 survivorship-bias
+rule) -- it only adds new tickers and updates names of existing ones.
+
 ## News source weighting (spec §3.6)
 
 Adapters tag `credibility_tier` 1-6 on ingestion (1 = regulator/official
