@@ -1,14 +1,13 @@
-"""Market-data ingestion: provider adapter -> ``market_prices_raw`` (spec §5 step 3).
+"""Market-data ingestion: provider adapter -> ``market_prices_raw`` (spec §5
+step 3), now capability-aware and validation-gated.
 
-Deliberately does not adjust for corporate actions, validate OHLC
-consistency, or fill missing trading days -- that's ``preprocessing``/
-``validation`` (Tahap 2's later steps), which read from ``market_prices_raw``
-and write ``market_prices_clean``. This module's only job is: call a
-provider, attach lineage, upsert raw rows idempotently.
+Assumes company master data is already synced (spec §5 step 2) -- a
+ticker with no matching ``Company`` row is skipped, not auto-created, so
+this never invents a company from a ticker string alone.
 
-Assumes company master data is already synced (spec §5 step 2, not yet
-implemented) -- a ticker with no matching ``Company`` row is skipped, not
-auto-created, so this never invents a company from a ticker string alone.
+Bars that fail OHLCV validation never reach ``market_prices_raw`` -- they
+go to ``market_price_quarantine`` instead (spec: "Jangan langsung
+menghapus bar yang gagal").
 """
 from __future__ import annotations
 
@@ -21,10 +20,14 @@ from sqlalchemy.orm import Session
 
 from src.data_sources.base import ProviderUnavailableError, SourceDescriptor
 from src.data_sources.market.base import MarketDataProvider
+from src.data_sources.market.capability import ProviderCapability
+from src.data_sources.market.yahoo_finance import default_yahoo_symbol
 from src.database.models.company import Company
-from src.database.models.market import MarketPriceRaw
+from src.database.models.market import MarketPriceQuarantine, MarketPriceRaw
 from src.database.models.mixins import QualityStatus
 from src.database.models.ops import DataSourceRegistry
+from src.ingestion.resilience import with_retry
+from src.validation.market_data import validate_ohlcv_bar
 
 
 @dataclasses.dataclass
@@ -33,6 +36,7 @@ class IngestOutcome:
     provider: str
     records_fetched: int = 0
     records_written: int = 0
+    records_quarantined: int = 0
     skipped_reason: str | None = None
 
 
@@ -52,12 +56,33 @@ def _get_or_create_source(session: Session, descriptor: SourceDescriptor, catego
     return source
 
 
+def _provider_symbol(provider_name: str, ticker: str) -> str:
+    if provider_name == "yahoo_finance":
+        return default_yahoo_symbol(ticker)
+    return ticker
+
+
+def _usage_restriction(capability: ProviderCapability) -> str:
+    # Yahoo Finance is unconditionally research_only (unofficial/ToS-gray
+    # source). Twelve Data's actual commercial-redistribution terms for a
+    # given plan have not been reviewed by this project, so it is NOT
+    # claimed "licensed" just because the capability probe succeeded --
+    # "unspecified" is the honest default until someone actually checks
+    # the plan's ToS.
+    if capability.provider_name == "yahoo_finance":
+        return "research_only"
+    return "unspecified"
+
+
 def ingest_ohlcv(
     session: Session,
     provider: MarketDataProvider,
     ticker: str,
     start: dt.date,
     end: dt.date,
+    capability: ProviderCapability,
+    ingestion_run_id: str,
+    max_retries: int = 4,
 ) -> IngestOutcome:
     outcome = IngestOutcome(ticker=ticker, provider=provider.provider_name)
 
@@ -67,7 +92,8 @@ def ingest_ohlcv(
         return outcome
 
     try:
-        result = provider.get_ohlcv(ticker, start, end)
+        fetch = with_retry(max_retries)(provider.get_ohlcv)
+        result = fetch(ticker, start, end)
     except ProviderUnavailableError as exc:
         outcome.skipped_reason = f"provider unavailable: {exc}"
         return outcome
@@ -81,7 +107,41 @@ def ingest_ohlcv(
     if not bars:
         return outcome
 
+    today = dt.datetime.now(dt.UTC).date()
+    valid_bars = []
+    for bar in bars:
+        validation = validate_ohlcv_bar(bar, today=today)
+        if validation.is_valid:
+            valid_bars.append(bar)
+        else:
+            session.add(
+                MarketPriceQuarantine(
+                    company_id=company.id,
+                    ticker=ticker,
+                    provider=provider.provider_name,
+                    trade_date=bar.trade_date,
+                    raw_row={
+                        "trade_date": bar.trade_date.isoformat(),
+                        "open": bar.open,
+                        "high": bar.high,
+                        "low": bar.low,
+                        "close": bar.close,
+                        "volume": bar.volume,
+                    },
+                    validation_errors=validation.errors,
+                    ingestion_run_id=ingestion_run_id,
+                    found_at=dt.datetime.now(dt.UTC),
+                    resolved=False,
+                )
+            )
+            outcome.records_quarantined += 1
+
+    if not valid_bars:
+        return outcome
+
     source = _get_or_create_source(session, result.source, category="market")
+    provider_symbol = _provider_symbol(provider.provider_name, ticker)
+    usage_restriction = _usage_restriction(capability)
 
     rows = [
         {
@@ -94,6 +154,15 @@ def ingest_ohlcv(
             "volume": bar.volume,
             "transaction_value": bar.transaction_value,
             "transaction_frequency": bar.transaction_frequency,
+            "adjusted_close_provider": bar.adjusted_close,
+            "provider_adjustment_status": bar.provider_adjustment_status,
+            "provider_symbol": provider_symbol,
+            "exchange": "IDX",
+            "interval": "1day",
+            "usage_restriction": usage_restriction,
+            "verification_status": "provider_reported",
+            "adjustment_source": provider.provider_name if bar.adjusted_close is not None else None,
+            "ingestion_run_id": ingestion_run_id,
             "source_id": source.id,
             "retrieved_at": result.retrieved_at,
             "available_at": result.available_at,
@@ -104,7 +173,7 @@ def ingest_ohlcv(
             "is_restated": False,
             "quality_status": QualityStatus.VALID,
         }
-        for bar in bars
+        for bar in valid_bars
     ]
 
     stmt = insert(MarketPriceRaw).values(rows)
@@ -118,6 +187,11 @@ def ingest_ohlcv(
             "volume",
             "transaction_value",
             "transaction_frequency",
+            "adjusted_close_provider",
+            "provider_adjustment_status",
+            "verification_status",
+            "adjustment_source",
+            "ingestion_run_id",
             "retrieved_at",
             "available_at",
             "quality_status",

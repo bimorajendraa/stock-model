@@ -22,13 +22,31 @@ from src.data_sources.base import (
     ValidationStatus,
 )
 from src.data_sources.market.base import MarketDataProvider, OHLCVBar
+from src.data_sources.market.capability import ProviderCapability
 from src.database.models.company import Company
-from src.database.models.market import MarketPriceRaw
+from src.database.models.market import MarketPriceQuarantine, MarketPriceRaw
 from src.database.models.ops import DataSourceRegistry
 from src.database.session import make_engine
 from src.ingestion.market_data import ingest_ohlcv
 
 pytestmark = pytest.mark.integration
+
+_FAKE_CAPABILITY = ProviderCapability(
+    provider_name="fake_test_provider",
+    asset_class="equity",
+    market="IDX",
+    capability="ohlcv",
+    access_level="unknown",
+    usage_mode="research",
+    is_official=False,
+    supports_historical=True,
+    supports_adjusted_price=False,
+    supports_dividends=False,
+    supports_splits=False,
+    supports_commercial_use=False,
+    status="available",
+    last_checked_at=None,
+)
 
 
 class _FakeProvider(MarketDataProvider):
@@ -78,6 +96,7 @@ def test_company(db_session):
         db_session.flush()
     yield company
     db_session.query(MarketPriceRaw).filter(MarketPriceRaw.company_id == company.id).delete()
+    db_session.query(MarketPriceQuarantine).filter(MarketPriceQuarantine.company_id == company.id).delete()
     db_session.query(DataSourceRegistry).filter(DataSourceRegistry.name == "fake_test_provider").delete()
     db_session.query(Company).filter(Company.id == company.id).delete()
     db_session.commit()
@@ -90,10 +109,13 @@ def test_ingest_ohlcv_writes_rows_with_lineage(db_session, test_company):
     ]
     provider = _FakeProvider(bars)
 
-    outcome = ingest_ohlcv(db_session, provider, "ZZZZ", dt.date(2026, 7, 1), dt.date(2026, 7, 2))
+    outcome = ingest_ohlcv(
+        db_session, provider, "ZZZZ", dt.date(2026, 7, 1), dt.date(2026, 7, 2), _FAKE_CAPABILITY, "test-run-1"
+    )
     db_session.commit()
 
     assert outcome.records_written == 2
+    assert outcome.records_quarantined == 0
     assert outcome.skipped_reason is None
 
     rows = db_session.scalars(
@@ -103,6 +125,9 @@ def test_ingest_ohlcv_writes_rows_with_lineage(db_session, test_company):
     assert float(rows[0].close) == 9010
     assert rows[0].source_id is not None
     assert rows[0].available_at is not None
+    assert rows[0].ingestion_run_id == "test-run-1"
+    assert rows[0].usage_restriction == "unspecified"  # fake_test_provider isn't yahoo_finance
+    assert rows[0].verification_status == "provider_reported"
 
     source = db_session.scalar(select(DataSourceRegistry).where(DataSourceRegistry.name == "fake_test_provider"))
     assert source is not None
@@ -114,12 +139,14 @@ def test_ingest_ohlcv_upsert_is_idempotent(db_session, test_company):
     bars = [OHLCVBar(dt.date(2026, 7, 1), 9000, 9050, 8950, 9010, 1000)]
     provider = _FakeProvider(bars)
 
-    ingest_ohlcv(db_session, provider, "ZZZZ", dt.date(2026, 7, 1), dt.date(2026, 7, 1))
+    ingest_ohlcv(db_session, provider, "ZZZZ", dt.date(2026, 7, 1), dt.date(2026, 7, 1), _FAKE_CAPABILITY, "test-run-2")
     db_session.commit()
 
-    updated_bars = [OHLCVBar(dt.date(2026, 7, 1), 9000, 9050, 8950, 9500, 2000)]  # revised close/volume
+    updated_bars = [OHLCVBar(dt.date(2026, 7, 1), 9000, 9600, 8950, 9500, 2000)]  # revised close/volume
     provider2 = _FakeProvider(updated_bars)
-    ingest_ohlcv(db_session, provider2, "ZZZZ", dt.date(2026, 7, 1), dt.date(2026, 7, 1))
+    ingest_ohlcv(
+        db_session, provider2, "ZZZZ", dt.date(2026, 7, 1), dt.date(2026, 7, 1), _FAKE_CAPABILITY, "test-run-3"
+    )
     db_session.commit()
 
     rows = db_session.scalars(
@@ -132,6 +159,35 @@ def test_ingest_ohlcv_upsert_is_idempotent(db_session, test_company):
 
 def test_ingest_ohlcv_skips_unknown_ticker(db_session):
     provider = _FakeProvider([])
-    outcome = ingest_ohlcv(db_session, provider, "NOPE", dt.date(2026, 7, 1), dt.date(2026, 7, 1))
+    outcome = ingest_ohlcv(
+        db_session, provider, "NOPE", dt.date(2026, 7, 1), dt.date(2026, 7, 1), _FAKE_CAPABILITY, "test-run-4"
+    )
     assert outcome.skipped_reason is not None
     assert "Company" in outcome.skipped_reason
+
+
+def test_ingest_ohlcv_quarantines_invalid_bar_instead_of_writing_it(db_session, test_company):
+    bars = [
+        OHLCVBar(dt.date(2026, 7, 1), 9000, 9050, 8950, 9010, 1000),  # valid
+        OHLCVBar(dt.date(2026, 7, 2), 9000, 8000, 8950, 9010, 1000),  # invalid: high < open
+    ]
+    provider = _FakeProvider(bars)
+
+    outcome = ingest_ohlcv(
+        db_session, provider, "ZZZZ", dt.date(2026, 7, 1), dt.date(2026, 7, 2), _FAKE_CAPABILITY, "test-run-5"
+    )
+    db_session.commit()
+
+    assert outcome.records_written == 1
+    assert outcome.records_quarantined == 1
+
+    written = db_session.scalars(select(MarketPriceRaw).where(MarketPriceRaw.company_id == test_company.id)).all()
+    assert len(written) == 1
+    assert written[0].trade_date == dt.date(2026, 7, 1)
+
+    quarantined = db_session.scalars(
+        select(MarketPriceQuarantine).where(MarketPriceQuarantine.company_id == test_company.id)
+    ).all()
+    assert len(quarantined) == 1
+    assert quarantined[0].trade_date == dt.date(2026, 7, 2)
+    assert any("high" in e for e in quarantined[0].validation_errors)
