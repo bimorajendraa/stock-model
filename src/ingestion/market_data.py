@@ -176,31 +176,40 @@ def ingest_ohlcv(
         for bar in valid_bars
     ]
 
-    stmt = insert(MarketPriceRaw).values(rows)
-    update_cols = {
-        col: getattr(stmt.excluded, col)
-        for col in (
-            "open",
-            "high",
-            "low",
-            "close",
-            "volume",
-            "transaction_value",
-            "transaction_frequency",
-            "adjusted_close_provider",
-            "provider_adjustment_status",
-            "verification_status",
-            "adjustment_source",
-            "ingestion_run_id",
-            "retrieved_at",
-            "available_at",
-            "quality_status",
-        )
-    }
-    stmt = stmt.on_conflict_do_update(
-        constraint="uq_price_raw_company_date_source",
-        set_=update_cols,
+    update_col_names = (
+        "open",
+        "high",
+        "low",
+        "close",
+        "volume",
+        "transaction_value",
+        "transaction_frequency",
+        "adjusted_close_provider",
+        "provider_adjustment_status",
+        "verification_status",
+        "adjustment_source",
+        "ingestion_run_id",
+        "retrieved_at",
+        "available_at",
+        "quality_status",
     )
-    session.execute(stmt)
+
+    # Postgres caps bound parameters at 65535 per query. A full 10-year
+    # backfill (~2500 rows x 27 columns/row) blows past that in a single
+    # multi-row INSERT -- hit live during the Tahap 2 smoke test
+    # (psycopg.OperationalError on the 3rd ticker, after two smaller ones
+    # succeeded). Chunking keeps each statement comfortably under the
+    # limit regardless of how many lineage columns this table grows to.
+    chunk_size = 1000
+    for i in range(0, len(rows), chunk_size):
+        chunk = rows[i : i + chunk_size]
+        stmt = insert(MarketPriceRaw).values(chunk)
+        update_cols = {col: getattr(stmt.excluded, col) for col in update_col_names}
+        stmt = stmt.on_conflict_do_update(
+            constraint="uq_price_raw_company_date_source",
+            set_=update_cols,
+        )
+        session.execute(stmt)
+
     outcome.records_written = len(rows)
     return outcome

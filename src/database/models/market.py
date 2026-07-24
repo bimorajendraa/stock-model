@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import datetime as dt
 
-from sqlalchemy import ForeignKey, Numeric, String, UniqueConstraint
+from sqlalchemy import BigInteger, ForeignKey, Numeric, String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -33,7 +33,11 @@ class MarketPriceRaw(Base, TimestampMixin, SourceLineageMixin):
     high: Mapped[float | None] = mapped_column(Numeric(18, 4), nullable=True)
     low: Mapped[float | None] = mapped_column(Numeric(18, 4), nullable=True)
     close: Mapped[float | None] = mapped_column(Numeric(18, 4), nullable=True)
-    volume: Mapped[int | None] = mapped_column(nullable=True)
+    # BigInteger, not the 32-bit default: some IDX penny stocks trade daily
+    # volumes well past 2^31 shares -- a real overflow was hit live during
+    # the Tahap 2 smoke test (AADI ingested fine at 386 rows; the next
+    # ticker crashed with psycopg.errors.NumericValueOutOfRange).
+    volume: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     transaction_value: Mapped[float | None] = mapped_column(Numeric(24, 4), nullable=True)
     transaction_frequency: Mapped[int | None] = mapped_column(nullable=True)
 
@@ -71,7 +75,7 @@ class MarketPriceClean(Base, TimestampMixin, SourceLineageMixin):
     low: Mapped[float | None] = mapped_column(Numeric(18, 4), nullable=True)
     close: Mapped[float | None] = mapped_column(Numeric(18, 4), nullable=True)
     adjusted_close: Mapped[float | None] = mapped_column(Numeric(18, 4), nullable=True)
-    volume: Mapped[int | None] = mapped_column(nullable=True)
+    volume: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     market_cap: Mapped[float | None] = mapped_column(Numeric(24, 4), nullable=True)
     adjustment_factor: Mapped[float | None] = mapped_column(Numeric(18, 8), nullable=True)
 
@@ -186,7 +190,7 @@ class MarketDataReconciliation(Base, TimestampMixin):
     verification_close: Mapped[float | None] = mapped_column(Numeric(18, 4), nullable=True)
     absolute_difference: Mapped[float | None] = mapped_column(Numeric(18, 4), nullable=True)
     percentage_difference: Mapped[float | None] = mapped_column(Numeric(9, 6), nullable=True)
-    volume_difference: Mapped[int | None] = mapped_column(nullable=True)
+    volume_difference: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     status: Mapped[str] = mapped_column(String(24), nullable=False)
     # matched | within_tolerance | mismatch | verification_unavailable
     checked_at: Mapped[dt.datetime] = mapped_column(nullable=False)
