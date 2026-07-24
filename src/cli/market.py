@@ -314,15 +314,27 @@ def cmd_market_reconcile(session: Session, settings: Settings, count: int) -> in
         rate_limiter.wait()
         end = dt.datetime.now(dt.UTC).date()
         start = end - dt.timedelta(days=7)
+
         try:
             primary = yahoo.get_ohlcv(company.ticker, start, end)
-            verification = twelve_data.get_ohlcv(company.ticker, start, end)
         except Exception as exc:  # noqa: BLE001 -- batch loop: one ticker's failure must not crash the whole run
-            print(f"{company.ticker}: reconciliation fetch failed ({exc})")
+            print(f"{company.ticker}: primary provider fetch failed, cannot reconcile ({exc})")
+            continue
+        primary_bar = primary.value[-1] if primary.is_usable() and primary.value else None
+        if primary_bar is None:
+            print(f"{company.ticker}: no primary data, cannot reconcile")
             continue
 
-        primary_bar = primary.value[-1] if primary.is_usable() and primary.value else None
-        verification_bar = verification.value[-1] if verification.is_usable() and verification.value else None
+        # Verification provider failing is NOT skipped -- it's exactly the
+        # verification_unavailable case reconcile_and_store exists to
+        # record (spec: store the comparison result, including "couldn't
+        # check"), not a reason to silently drop the row.
+        try:
+            verification = twelve_data.get_ohlcv(company.ticker, start, end)
+            verification_bar = verification.value[-1] if verification.is_usable() and verification.value else None
+        except Exception as exc:  # noqa: BLE001 -- verification failure must still be recorded, not crash the batch
+            print(f"{company.ticker}: verification provider unavailable ({exc})")
+            verification_bar = None
 
         record = reconcile_and_store(
             session,
