@@ -1,1 +1,1 @@
-"""Placeholder package -- implemented in Tahap 2 (data validation). No business logic yet."""
+"""Data validation (spec section 5). market_data.py implemented (Tahap 2); others pending."""

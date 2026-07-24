@@ -1,1 +1,1 @@
-"""Placeholder package -- implemented in cross-cutting utilities (added as needed). No business logic yet."""
+"""Cross-cutting utilities shared across modules. trading_calendar.py implemented (Tahap 2)."""
