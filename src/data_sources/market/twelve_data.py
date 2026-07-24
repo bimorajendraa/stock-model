@@ -28,6 +28,7 @@ from src.data_sources.base import (
     ValidationStatus,
 )
 from src.data_sources.market.base import CompanyRecord, MarketDataProvider, OHLCVBar
+from src.data_sources.market.capability import classify_twelve_data_error, is_twelve_data_error_payload
 
 _BASE_URL = "https://api.twelvedata.com"
 _SOURCE = SourceDescriptor(name="twelve_data", url=_BASE_URL, access_type=AccessType.DOCUMENTED_FREE)
@@ -50,15 +51,17 @@ class TwelveDataMarketProvider(MarketDataProvider):
         except httpx.HTTPError as exc:
             raise ProviderUnavailableError(f"twelve_data request failed: {exc}") from exc
 
-        if response.status_code == 429:
-            raise ProviderUnavailableError("twelve_data rate limit exceeded")
         try:
             payload = response.json()
         except ValueError as exc:
             raise ProviderUnavailableError("twelve_data returned a non-JSON response") from exc
 
-        if isinstance(payload, dict) and payload.get("status") == "error":
-            raise ProviderUnavailableError(f"twelve_data error: {payload.get('message')}")
+        # See capability.is_twelve_data_error_payload's docstring: an
+        # earlier version of this method only checked "status" == "error"
+        # and missed the demo-key case entirely (no "status" key on that
+        # response at all), which a live capability probe caught.
+        if response.status_code >= 400 or is_twelve_data_error_payload(payload if isinstance(payload, dict) else {}):
+            raise classify_twelve_data_error(response.status_code, payload if isinstance(payload, dict) else {})
         return payload
 
     def list_active_tickers(self) -> SourcedValue[list[str]]:
