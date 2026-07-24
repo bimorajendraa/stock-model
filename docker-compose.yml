@@ -1,0 +1,53 @@
+# Tahap 1 scope: database + API only, enough to run migrations and prove
+# the deployment shape. Scheduler (Prefect), MLflow, frontend, worker, and
+# Redis are added in later phases (spec §36) once there is a pipeline and
+# dashboard to run -- adding empty services now would just be inert compose
+# entries with nothing to verify against.
+
+services:
+  db:
+    build:
+      context: ./docker/db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-idx}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-idx}
+      POSTGRES_DB: ${POSTGRES_DB:-idx_intelligence}
+    ports:
+      # Host port 5433, not 5432: many dev machines already run a native
+      # PostgreSQL service on 5432 (Windows installs it as a service by
+      # default), and binding the container there silently loses to it --
+      # connections from the host land on the native instance instead,
+      # with different credentials. Container-internal port stays 5432.
+      - "5433:5432"
+    volumes:
+      - idx_db_data:/var/lib/postgresql/data
+      - ./docker/db/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-idx} -d ${POSTGRES_DB:-idx_intelligence}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-idx}:${POSTGRES_PASSWORD:-idx}@db:5432/${POSTGRES_DB:-idx_intelligence}
+      APP_ENV: ${APP_ENV:-development}
+      APP_TIMEZONE: ${APP_TIMEZONE:-Asia/Jakarta}
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  idx_db_data:
