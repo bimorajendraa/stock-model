@@ -35,8 +35,9 @@ packages = ["src", "apps"]
 
 [tool.pytest.ini_options]
 testpaths = ["src/tests"]
+addopts = "-m 'not integration'"
 markers = [
-    "integration: requires a running database (docker compose)",
+    "integration: requires a running database (docker compose) -- run explicitly with -m integration",
 ]
 
 [tool.ruff]

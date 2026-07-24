@@ -78,12 +78,14 @@ curl http://localhost:8000/api/v1/health
 ## Tests
 
 ```bash
-pytest -v
+pytest -v                 # default: unit tests only, no database needed
+pytest -v -m integration  # requires: docker compose up -d db first
 ```
 
-Tahap 1 tests are model/interface/config sanity checks that don't require
-a running database. Tests marked `integration` (added from Tahap 2 onward)
-require `docker compose up -d db` first.
+Tests marked `integration` are excluded by default (`addopts` in
+`pyproject.toml`) and must be selected explicitly -- they hit a real
+Postgres instead of mocks, to prove things like upsert/lineage/FK behavior
+actually work against the live schema, not just that the ORM calls compile.
 
 ## Backfill / pipelines / training / dashboard
 

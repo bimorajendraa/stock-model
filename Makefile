@@ -1,4 +1,4 @@
-.PHONY: install up down migrate migrate-new test lint fmt
+.PHONY: install up down migrate migrate-new test test-integration lint fmt
 
 install:
 	python -m venv .venv
@@ -18,6 +18,9 @@ migrate-new:
 
 test:
 	.venv/bin/pytest -v
+
+test-integration:
+	.venv/bin/pytest -v -m integration
 
 lint:
 	.venv/bin/ruff check src apps

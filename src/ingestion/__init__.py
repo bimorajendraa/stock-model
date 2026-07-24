@@ -1,1 +1,5 @@
-"""Placeholder package -- implemented in Tahap 2 (market/fundamentals/macro/news ingestion). No business logic yet."""
+"""Ingestion jobs: provider adapters -> raw tables (spec §5).
+
+market_data.py implemented (Tahap 2). fundamentals/macro/news ingestion not
+yet started.
+"""
