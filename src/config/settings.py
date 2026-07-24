@@ -41,6 +41,8 @@ class Settings(BaseSettings):
     # --- Data provider credentials (all optional; adapters degrade gracefully) ---
     news_provider_api_key: str | None = Field(default=None, alias="NEWS_PROVIDER_API_KEY")
     market_data_provider_api_key: str | None = Field(default=None, alias="MARKET_DATA_PROVIDER_API_KEY")
+    twelve_data_api_key: str | None = Field(default=None, alias="TWELVE_DATA_API_KEY")
+    sectors_app_api_key: str | None = Field(default=None, alias="SECTORS_APP_API_KEY")
 
     # --- Cache ---
     redis_url: str | None = Field(default=None, alias="REDIS_URL")

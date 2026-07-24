@@ -1,11 +1,12 @@
 # Data sources
 
-Status: Tahap 1 -- no adapters are implemented yet. This documents the
-category structure and access-tier policy adapters must follow (spec §3,
-§2.5-10). It intentionally does not name specific vendor endpoints/URLs
-until an adapter for them is actually implemented and reviewed against
-their terms of use -- listing an unverified endpoint here would violate the
-"never fabricate a source" rule as much as fabricating data would.
+Status: Tahap 2 in progress -- market-data adapters implemented; fundamentals/
+macro/industry/news adapters not yet started. This documents the category
+structure and access-tier policy adapters must follow (spec §3, §2.5-10).
+It intentionally does not name specific vendor endpoints/URLs until an
+adapter for them is actually implemented and reviewed against their terms
+of use -- listing an unverified endpoint here would violate the "never
+fabricate a source" rule as much as fabricating data would.
 
 ## Access-tier policy (`AccessType`, `src/data_sources/base.py`)
 
@@ -28,11 +29,57 @@ workaround" problem (`TermsOfServiceViolation` in
 
 | Category | Interface | Spec section | Adapter count requirement |
 |---|---|---|---|
-| Market data (OHLCV, corporate actions) | `src/data_sources/market/base.py::MarketDataProvider` | §3.2 | >=2 adapters (fallback + cross-check) |
+| Market data (OHLCV, corporate actions) | `src/data_sources/market/base.py::MarketDataProvider` | §3.2 | >=2 adapters -- **done**: `twelve_data.py`, `sectors_app.py` |
 | Fundamentals (financial statements) | `src/data_sources/fundamentals/base.py::FundamentalsProvider` | §3.3 | prioritize XBRL/structured over PDF/OCR |
 | Macro (BI-Rate, inflation, FX, global macro) | `src/data_sources/macro/base.py::MacroDataProvider` | §3.4 | one per publisher |
 | Industry/sector-specific metrics | `src/data_sources/industry/base.py::IndustryDataProvider` | §3.5 | one per sector where disclosed |
 | News | `src/data_sources/news/base.py::NewsProvider` | §3.6 | target >=5 distinct domains per company analysis, cap ~10 |
+
+## Market data: what was actually investigated (2026-07-24)
+
+Before implementing anything, real candidate sources were checked live
+(not recalled from memory -- spec §2.2 forbids fabricated endpoints).
+Findings, so this isn't re-investigated from scratch later:
+
+- **IDX's own site (idx.co.id)** blocks automated access outright -- even
+  `robots.txt` returns 403 (Cloudflare bot protection). Programmatic access
+  exists only via the paid "IDX Data Services" commercial product. Not
+  usable as a free/scraped source; excluded.
+- **Stooq** now gates its CSV download behind a JS proof-of-work challenge.
+  Solving that programmatically would be exactly the kind of anti-bot
+  bypass spec §2.5-6 prohibits. Excluded.
+- **Yahoo Finance / `yfinance`** scrapes an undocumented endpoint outside
+  Yahoo's ToS-sanctioned API. Free and IDX-complete, but legally ambiguous
+  -- not implemented (see ADR discussion in the Tahap 2 conversation; may
+  be revisited if the user explicitly accepts that ambiguity).
+- **Twelve Data** (`src/data_sources/market/twelve_data.py`) -- real,
+  documented REST API, genuinely free to register (confirmed via live
+  error message, not marketing copy). `GET /stocks?exchange=IDX` returns
+  964 real IDX tickers even with the public `demo` key (verified live).
+  `GET /time_series` needs a real (still free) key. access_type:
+  `documented_free`. Corporate actions endpoint NOT implemented -- its
+  contract wasn't verified before this was written, so it's left as
+  `NotImplementedError` rather than guessed.
+- **Sectors.app** (`src/data_sources/market/sectors_app.py`) -- IDX-focused,
+  implemented directly against the live OpenAPI schema at
+  `https://api.sectors.app/schema/` (docs.sectors.app itself 403s automated
+  fetches, but the schema endpoint doesn't). No free tier -- inert until
+  `SECTORS_APP_API_KEY` is set. access_type: `fallback_provider`. Known
+  real limitation: `/v2/daily/{symbol}/` returns close/volume/market_cap
+  only, no open/high/low -- the adapter returns `None` for those rather
+  than fabricating them. Also exposes a large fundamentals/sector-metrics
+  surface (`/v2/companies/` supports SQL-like queries over revenue, ROE,
+  banking NPL/NIM/CAR, etc.) -- worth prioritizing when
+  `FundamentalsProvider`/`IndustryProvider` adapters are built, since one
+  verified vendor covering both saves re-doing this research.
+- **Sectors.app's v1 API is dead**: a v1 endpoint found via search-engine
+  snippets returned `410 Gone` (sunset 2026-05-11) when actually queried --
+  confirms why every endpoint here was checked live instead of trusted from
+  search results or memory.
+
+Both implemented adapters raise `ProviderUnavailableError` (not a crash,
+not fabricated data) when their API key is absent or the upstream call
+fails -- ingestion code must catch this and fall back per spec §33.
 
 ## News source weighting (spec §3.6)
 
