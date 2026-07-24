@@ -200,10 +200,26 @@ def cmd_market_smoke_test(session: Session, settings: Settings, count: int) -> i
     return 0 if idempotent_ok and total_failed == 0 else 1
 
 
-def cmd_market_backfill(session: Session, settings: Settings, count: int | None, ticker: str | None) -> int:
+def cmd_market_backfill(
+    session: Session,
+    settings: Settings,
+    count: int | None,
+    ticker: str | None,
+    offset: int = 0,
+    limit: int | None = None,
+) -> int:
     run = _start_pipeline_run(session, "market_backfill")
     selector = build_selector(settings)
-    companies = [c for c in [session.scalar(select(Company).where(Company.ticker == ticker))] if c] if ticker else _select_companies(session, count or 50)
+    if ticker:
+        companies = [c for c in [session.scalar(select(Company).where(Company.ticker == ticker))] if c]
+    elif offset or limit is not None:
+        # Plain ticker-ordered slice, not the spread sampling _select_companies
+        # does for smoke tests -- used to chunk a full-universe backfill into
+        # pieces that each finish within a single process run.
+        all_companies = list(session.scalars(select(Company).order_by(Company.ticker)))
+        companies = all_companies[offset : offset + limit] if limit is not None else all_companies[offset:]
+    else:
+        companies = _select_companies(session, count or 50)
     if not companies:
         _finish_pipeline_run(session, run, 0, 0, "no matching companies")
         print("FAILED: no matching companies.")

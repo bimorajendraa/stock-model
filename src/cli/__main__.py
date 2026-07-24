@@ -45,6 +45,8 @@ def build_parser() -> argparse.ArgumentParser:
     backfill = market_sub.add_parser("backfill", help="Full-history backfill")
     backfill.add_argument("--count", type=int, default=None)
     backfill.add_argument("--ticker", type=str, default=None)
+    backfill.add_argument("--offset", type=int, default=0, help="Ticker-ordered slice start, for chunking a full-universe run")
+    backfill.add_argument("--limit", type=int, default=None, help="Ticker-ordered slice size, for chunking a full-universe run")
 
     market_sub.add_parser("update", help="Incremental update for all companies")
 
@@ -71,7 +73,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.group == "market" and args.action == "smoke-test":
             return cmd_market_smoke_test(session, settings, args.count)
         if args.group == "market" and args.action == "backfill":
-            return cmd_market_backfill(session, settings, args.count, args.ticker)
+            return cmd_market_backfill(session, settings, args.count, args.ticker, args.offset, args.limit)
         if args.group == "market" and args.action == "update":
             return cmd_market_update(session, settings)
         if args.group == "market" and args.action == "reconcile":
