@@ -45,6 +45,7 @@ def _indicator_feature_columns(df: pd.DataFrame) -> list[str]:
 @dataclasses.dataclass
 class BaselineComparisonResult:
     model_name: str
+    train: ClassificationMetrics
     validation: ClassificationMetrics
     test: ClassificationMetrics
 
@@ -103,6 +104,13 @@ def run_baseline_comparison(
 
         model.fit(X_train, y_train)
 
+        # Train-set metrics too, not just val/test: spec section 18 requires
+        # reporting the train/validation gap as overfitting evidence, not
+        # just claiming a model isn't overfit.
+        train_proba = model.predict_proba(X_train)[:, 1]
+        train_pred = (train_proba >= 0.5).astype(int)
+        train_metrics = evaluate_classification(y_train.to_numpy(), train_pred, train_proba)
+
         val_proba = model.predict_proba(X_val)[:, 1]
         val_pred = (val_proba >= 0.5).astype(int)
         val_metrics = evaluate_classification(y_val.to_numpy(), val_pred, val_proba)
@@ -111,6 +119,8 @@ def run_baseline_comparison(
         test_pred = (test_proba >= 0.5).astype(int)
         test_metrics = evaluate_classification(y_test.to_numpy(), test_pred, test_proba)
 
-        results.append(BaselineComparisonResult(model_name=name, validation=val_metrics, test=test_metrics))
+        results.append(
+            BaselineComparisonResult(model_name=name, train=train_metrics, validation=val_metrics, test=test_metrics)
+        )
 
     return results, info
