@@ -85,7 +85,12 @@ def test_rank_companies_by_market_cap_orders_descending(db_session):
     db_session.commit()
 
     try:
-        ranked = rank_companies_by_market_cap(db_session, 10)
+        # top_n must comfortably exceed the real company count (~950) --
+        # otherwise these Rp-thousands test fixtures never appear in the
+        # slice at all once real IDX companies (worth trillions) are in
+        # the same database, and this becomes a false failure rather than
+        # a real one.
+        ranked = rank_companies_by_market_cap(db_session, 10_000)
         our_tickers_in_order = [r.ticker for r in ranked if r.ticker.startswith("ZZZM")]
         assert our_tickers_in_order == ["ZZZM2", "ZZZM1", "ZZZM3"]  # 500k > 100k > 10k market cap
     finally:
@@ -93,4 +98,50 @@ def test_rank_companies_by_market_cap_orders_descending(db_session):
             db_session.query(MarketPriceClean).filter(MarketPriceClean.company_id == c.id).delete()
             db_session.query(Company).filter(Company.id == c.id).delete()
         db_session.query(DataSourceRegistry).filter(DataSourceRegistry.name == "fake_mcap_source").delete()
+        db_session.commit()
+
+
+def test_rank_companies_by_market_cap_falls_back_when_latest_bar_has_null_close(db_session):
+    """Regression test: a first attempt at this ranking silently dropped
+    BBCA/BBRI/BMRI/ASII (Indonesia's actual largest caps) because their
+    most recently ingested row was today's still-forming bar with
+    close=NULL, and the old query only ever looked at the single
+    latest-dated row."""
+    now = dt.datetime.now(dt.UTC)
+    source = db_session.scalar(select(DataSourceRegistry).where(DataSourceRegistry.name == "fake_mcap_source2"))
+    if source is None:
+        source = DataSourceRegistry(name="fake_mcap_source2", category="market", access_type="internal_derived", is_active=True)
+        db_session.add(source)
+        db_session.flush()
+
+    company = Company(ticker="ZZZM4", company_name="Test ZZZM4 Mega Cap", shares_outstanding=1_000_000)
+    db_session.add(company)
+    db_session.flush()
+    # Yesterday: a real close. Today: still-forming bar, close=NULL.
+    db_session.add_all(
+        [
+            MarketPriceClean(
+                company_id=company.id, trade_date=dt.date(2026, 1, 1), close=1000.0,
+                source_id=source.id, retrieved_at=now, available_at=now,
+                currency="IDR", unit="unit", quality_status=QualityStatus.VALID,
+            ),
+            MarketPriceClean(
+                company_id=company.id, trade_date=dt.date(2026, 1, 2), close=None,
+                source_id=source.id, retrieved_at=now, available_at=now,
+                currency="IDR", unit="unit", quality_status=QualityStatus.VALID,
+            ),
+        ]
+    )
+    db_session.commit()
+
+    try:
+        ranked = rank_companies_by_market_cap(db_session, 10_000)  # see note above: must exceed real company count
+        matches = [r for r in ranked if r.ticker == "ZZZM4"]
+        assert len(matches) == 1  # must NOT be silently dropped
+        assert matches[0].latest_close == 1000.0  # falls back to the last real close
+        assert matches[0].price_date == dt.date(2026, 1, 1)
+    finally:
+        db_session.query(MarketPriceClean).filter(MarketPriceClean.company_id == company.id).delete()
+        db_session.query(Company).filter(Company.id == company.id).delete()
+        db_session.query(DataSourceRegistry).filter(DataSourceRegistry.name == "fake_mcap_source2").delete()
         db_session.commit()

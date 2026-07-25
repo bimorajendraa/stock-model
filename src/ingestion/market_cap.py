@@ -82,12 +82,19 @@ def rank_companies_by_market_cap(session: Session, top_n: int) -> list[RankedCom
 
     ranked: list[RankedCompany] = []
     for company in companies:
+        # Must filter close IS NOT NULL in the query itself, not just check
+        # the single latest-dated row and give up -- today's still-forming
+        # bar commonly has close=NULL (market not yet closed / EOD not
+        # published), which silently dropped every mega-cap whose most
+        # recent ingested row happened to be today's (BBCA, BBRI, BMRI,
+        # ASII all missing from a first attempt at this ranking because of
+        # exactly this).
         latest = session.scalar(
             select(MarketPriceClean)
-            .where(MarketPriceClean.company_id == company.id)
+            .where(MarketPriceClean.company_id == company.id, MarketPriceClean.close.is_not(None))
             .order_by(MarketPriceClean.trade_date.desc())
         )
-        if latest is None or latest.close is None:
+        if latest is None:
             continue
         close = float(latest.close)
         market_cap = close * company.shares_outstanding
