@@ -9,6 +9,7 @@ Examples:
     python -m src.cli corporate-actions sync --ticker BBCA
     python -m src.cli market reconcile --count 5
     python -m src.cli market build-clean --offset 0 --limit 150
+    python -m src.cli features compute-technical --offset 0 --limit 150
 """
 from __future__ import annotations
 
@@ -17,6 +18,7 @@ import sys
 
 from sqlalchemy.orm import Session
 
+from src.cli.features import cmd_features_compute_technical
 from src.cli.market import (
     cmd_corporate_actions_sync,
     cmd_market_backfill,
@@ -64,6 +66,12 @@ def build_parser() -> argparse.ArgumentParser:
     ca_sync = ca_sub.add_parser("sync", help="Sync corporate actions for one ticker")
     ca_sync.add_argument("--ticker", type=str, required=True)
 
+    features = subparsers.add_parser("features", help="Feature engineering commands")
+    features_sub = features.add_subparsers(dest="action", required=True)
+    compute_technical = features_sub.add_parser("compute-technical", help="Compute technical indicators into technical_features")
+    compute_technical.add_argument("--offset", type=int, default=0)
+    compute_technical.add_argument("--limit", type=int, default=None)
+
     return parser
 
 
@@ -88,6 +96,8 @@ def main(argv: list[str] | None = None) -> int:
             return cmd_market_build_clean(session, settings, args.offset, args.limit)
         if args.group == "corporate-actions" and args.action == "sync":
             return cmd_corporate_actions_sync(session, settings, args.ticker)
+        if args.group == "features" and args.action == "compute-technical":
+            return cmd_features_compute_technical(session, settings, args.offset, args.limit)
 
     parser.error("unknown command")
     return 2

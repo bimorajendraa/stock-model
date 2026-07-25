@@ -1,1 +1,1 @@
-"""Placeholder package -- implemented in Tahap 3. No business logic yet."""
+"""Technical indicators (spec section 7). indicators.py implemented (Tahap 3)."""

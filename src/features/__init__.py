@@ -1,1 +1,1 @@
-"""Placeholder package -- implemented in Tahap 3 (feature engineering). No business logic yet."""
+"""Feature engineering (spec section 7-8). technical/ implemented (Tahap 3); fundamental/sector/macro/sentiment pending."""
