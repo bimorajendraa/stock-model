@@ -1,1 +1,1 @@
-"""Placeholder package -- implemented in Tahap 4. No business logic yet."""
+"""Model evaluation metrics (spec section 19). classification.py and regression.py implemented (Tahap 4)."""

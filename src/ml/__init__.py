@@ -1,1 +1,1 @@
-"""Placeholder package -- implemented in Tahap 4. No business logic yet."""
+"""ML pipeline (spec sections 13-19). datasets/ and baselines/ implemented (Tahap 4); rest pending."""

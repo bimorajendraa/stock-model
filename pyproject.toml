@@ -19,6 +19,8 @@ dependencies = [
     "tenacity>=9.0",
     "pandas>=2.2",
     "numpy>=1.26",
+    "scikit-learn>=1.5",
+    "scipy>=1.13",
 ]
 
 [project.optional-dependencies]

@@ -1,1 +1,1 @@
-"""Placeholder package -- implemented in Tahap 4. No business logic yet."""
+"""Baseline models (spec section 13) -- built and beaten before any deep learning. Implemented (Tahap 4)."""
