@@ -9,7 +9,7 @@ dashboard. See the full spec context in `docs/`.
 **This is a research/decision-support tool, not a trading system and not a
 guarantee of profit.** See `docs/risk_and_limitations.md`.
 
-## Status: Tahap 3 in progress (technical features)
+## Status: Tahap 4 in progress (model training)
 
 **Tahap 1 (scaffold)** -- done: full repo structure, 32-table schema +
 Alembic migrations with mandatory source-lineage columns on every fact
@@ -50,6 +50,19 @@ app, `docker-compose.yml` (`db` + `api`), ADRs (`docs/adr/`).
 - Deferred: market-relative features (need an index series not yet
   ingested), support/resistance ensemble, fundamental/sector/sentiment
   features.
+
+**Tahap 4 (model training)** -- baselines only (`docs/model_methodology.md`):
+- Point-in-time labeling, date-based train/validation/test split with
+  embargo + purging (never random -- spec forbids it for time-series).
+- Naive/rule/logistic-regression/random-forest/small-MLP baselines, run
+  for real on the top-50 dataset. Honest finding: none robustly beat the
+  naive baseline on held-out test data, and random forest/MLP show clear
+  overfitting (train AUC 0.65-0.69 vs. test AUC 0.52-0.53) despite
+  regularization -- consistent with technical-only features being close
+  to their practical ceiling; the spec's own architecture expects
+  fundamental/sentiment/macro branches too, none of which exist yet.
+  **No model here is used by anything -- there is no recommendation
+  engine yet.**
 
 **Not yet implemented**: fundamentals/macro/industry/news adapters,
 feature engineering, models, valuation, recommendations, dashboard. See
