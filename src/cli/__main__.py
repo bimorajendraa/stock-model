@@ -8,6 +8,7 @@ Examples:
     python -m src.cli market update
     python -m src.cli corporate-actions sync --ticker BBCA
     python -m src.cli market reconcile --count 5
+    python -m src.cli market build-clean --offset 0 --limit 150
 """
 from __future__ import annotations
 
@@ -19,6 +20,7 @@ from sqlalchemy.orm import Session
 from src.cli.market import (
     cmd_corporate_actions_sync,
     cmd_market_backfill,
+    cmd_market_build_clean,
     cmd_market_reconcile,
     cmd_market_smoke_test,
     cmd_market_update,
@@ -53,6 +55,10 @@ def build_parser() -> argparse.ArgumentParser:
     reconcile = market_sub.add_parser("reconcile", help="Cross-provider price reconciliation")
     reconcile.add_argument("--count", type=int, default=5)
 
+    build_clean = market_sub.add_parser("build-clean", help="Preprocess raw prices into market_prices_clean")
+    build_clean.add_argument("--offset", type=int, default=0)
+    build_clean.add_argument("--limit", type=int, default=None)
+
     ca = subparsers.add_parser("corporate-actions", help="Corporate action commands")
     ca_sub = ca.add_subparsers(dest="action", required=True)
     ca_sync = ca_sub.add_parser("sync", help="Sync corporate actions for one ticker")
@@ -78,6 +84,8 @@ def main(argv: list[str] | None = None) -> int:
             return cmd_market_update(session, settings)
         if args.group == "market" and args.action == "reconcile":
             return cmd_market_reconcile(session, settings, args.count)
+        if args.group == "market" and args.action == "build-clean":
+            return cmd_market_build_clean(session, settings, args.offset, args.limit)
         if args.group == "corporate-actions" and args.action == "sync":
             return cmd_corporate_actions_sync(session, settings, args.ticker)
 

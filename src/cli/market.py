@@ -27,6 +27,7 @@ from src.ingestion.incremental import backfill_window, update_window
 from src.ingestion.market_data import ingest_ohlcv
 from src.ingestion.reconciliation import reconcile_and_store
 from src.ingestion.resilience import CircuitBreaker, RateLimiter
+from src.preprocessing.market_prices import build_clean_prices
 
 logger = logging.getLogger(__name__)
 
@@ -370,3 +371,36 @@ def cmd_market_reconcile(session: Session, settings: Settings, count: int) -> in
     _finish_pipeline_run(session, run, checked, 0, None)
     print(f"\nReconciliation summary: {checked}/{len(companies)} companies checked")
     return 0 if checked > 0 else 1
+
+
+def cmd_market_build_clean(session: Session, settings: Settings, offset: int = 0, limit: int | None = None) -> int:
+    """Preprocesses market_prices_raw -> market_prices_clean (spec section
+    6.1) for every company that has raw data, or a chunked slice of them."""
+    run = _start_pipeline_run(session, "market_build_clean")
+    all_companies = list(session.scalars(select(Company).order_by(Company.ticker)))
+    companies = all_companies[offset : offset + limit] if limit is not None else all_companies[offset:]
+    if not companies:
+        _finish_pipeline_run(session, run, 0, 0, "no companies in database")
+        print("FAILED: no companies in database.")
+        return 1
+
+    total_written = 0
+    total_outliers = 0
+    total_skipped = 0
+
+    for company in companies:
+        outcome = build_clean_prices(session, company.ticker, settings.price_adjustment_policy)
+        session.commit()
+        if outcome.skipped_reason:
+            total_skipped += 1
+            continue
+        print(f"{company.ticker}: processed={outcome.rows_processed} written={outcome.rows_written} outliers={outcome.outliers_flagged}")
+        total_written += outcome.rows_written
+        total_outliers += outcome.outliers_flagged
+
+    _finish_pipeline_run(session, run, total_written, total_skipped, None)
+    print(
+        f"\nBuild-clean summary: {len(companies)} companies, {total_written} rows written, "
+        f"{total_outliers} outliers flagged, {total_skipped} skipped (no raw data)"
+    )
+    return 0

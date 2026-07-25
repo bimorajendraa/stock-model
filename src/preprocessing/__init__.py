@@ -1,1 +1,2 @@
-"""Placeholder package -- implemented in Tahap 2 (normalization). No business logic yet."""
+"""Normalization: raw provider data -> validated/adjusted clean tables.
+market_prices.py implemented (Tahap 2)."""

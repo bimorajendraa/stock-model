@@ -22,6 +22,12 @@ class AccessType(str, enum.Enum):
     OFFICIAL = "official"
     DOCUMENTED_FREE = "documented_free"
     FALLBACK_PROVIDER = "fallback_provider"
+    # For rows this platform derives itself (e.g. market_prices_clean from
+    # market_prices_raw) -- not an external source at all, and deliberately
+    # NOT "official": that word is reserved elsewhere in this codebase for
+    # IDX/government sources specifically, and reusing it here would blur
+    # a distinction the rest of the docs/code are careful about.
+    INTERNAL_DERIVED = "internal_derived"
 
 
 class ValidationStatus(str, enum.Enum):
