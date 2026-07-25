@@ -65,6 +65,48 @@ columns (and `market_data_reconciliation.volume_difference`) to
 caught that a fixture-based test would not have (no fixture author would
 think to test a 2.1-billion-share day).
 
+## Market cap and shares outstanding
+
+`src/ingestion/market_cap.py`. No adapter provides `shares_outstanding`
+in bulk (see the company-master-data limitation in `docs/data_sources.md`)
+-- but Yahoo Finance's `yf.Ticker(...).fast_info` returns it directly per
+ticker (verified live: BBCA has ~122.9B shares). `fetch_and_store_shares_
+outstanding()` fetches and stores it on `companies.shares_outstanding`
+(NULL since Tahap 1 until this). `rank_companies_by_market_cap()` then
+computes `market_cap = shares_outstanding * this project's own latest
+stored close` (not Yahoo's own marketCap figure) as a pure DB read.
+
+Real run (2026-07-25): 926 of 947 companies got real shares_outstanding
+(21 failed -- mostly the same class of non-equity/delisted-adjacent
+tickers seen elsewhere). Real top 5 by market cap: BBCA, BREN, DCII, BBRI,
+BMRI -- all recognizable large caps, a good sanity check that the ranking
+is working correctly.
+
+**A real ranking bug this caught**: the first ranking attempt completely
+omitted BBCA, BBRI, BMRI, and ASII -- Indonesia's actual largest caps.
+Cause: the query picked the single latest-dated `market_prices_clean` row
+per company and required its `close` to be non-null; today's
+still-forming bar (market not yet closed) commonly has `close=NULL`, so
+any mega-cap whose most recent ingested row happened to be today's got
+silently dropped instead of falling back to its last real close. Fixed by
+filtering `close IS NOT NULL` in the query itself. A regression test
+covers this exact shape.
+
+Another real 32-bit overflow was hit and fixed the same way as the
+`volume` bug above: `companies.shares_outstanding` was `INTEGER`; BBCA's
+share count alone exceeds it. Migrated to `BIGINT`.
+
+Deliberately NOT retroactively applied to historical `market_prices_
+clean` rows -- a real historical market cap needs the real historical
+share count, which isn't available; assuming constant current shares
+across 10 years of history would be exactly the kind of quiet inaccuracy
+this project avoids elsewhere.
+
+```
+python -m src.cli market fetch-marketcap --offset 0 --limit 150
+python -m src.cli market top-marketcap --count 50
+```
+
 ## Backfill vs. incremental update
 
 `src/ingestion/incremental.py`:

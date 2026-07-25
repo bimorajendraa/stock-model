@@ -9,7 +9,7 @@ dashboard. See the full spec context in `docs/`.
 **This is a research/decision-support tool, not a trading system and not a
 guarantee of profit.** See `docs/risk_and_limitations.md`.
 
-## Status: Tahap 2 in progress (market data)
+## Status: Tahap 3 in progress (technical features)
 
 **Tahap 1 (scaffold)** -- done: full repo structure, 32-table schema +
 Alembic migrations with mandatory source-lineage columns on every fact
@@ -32,11 +32,24 @@ app, `docker-compose.yml` (`db` + `api`), ADRs (`docs/adr/`).
 - Preprocessing into `market_prices_clean` (`docs/market_data.md`):
   1,706,497 rows across 944 companies, 1:1 with raw, 226 bars flagged
   (not deleted) as outliers.
+- Market cap ranking (`docs/market_data.md`): shares_outstanding for 926
+  companies via Yahoo Finance `fast_info`, real top-50-by-market-cap
+  (BBCA/BREN/DCII/BBRI/BMRI...) -- caught and fixed a real bug that
+  silently dropped mega-caps whose latest bar had a null close.
 - Provisional multi-source corporate actions (`docs/corporate_actions.md`)
   and cross-provider reconciliation (IDX itself is not reachable -- see
   `docs/data_sources.md`).
 - CLI: `python -m src.cli ...` (providers check, market smoke-test/
-  backfill/update/reconcile, corporate-actions sync).
+  backfill/update/reconcile/fetch-marketcap/top-marketcap,
+  corporate-actions sync).
+
+**Tahap 3 (technical features)** -- started (`docs/technical_features.md`):
+- 36 technical indicators (trend/momentum/volatility/volume) implemented
+  from scratch in pandas, computed on adjustment-scaled OHLC. Run for real
+  against the top 50 companies by market cap: 3.5M+ feature rows written.
+- Deferred: market-relative features (need an index series not yet
+  ingested), support/resistance ensemble, fundamental/sector/sentiment
+  features.
 
 **Not yet implemented**: fundamentals/macro/industry/news adapters,
 feature engineering, models, valuation, recommendations, dashboard. See
