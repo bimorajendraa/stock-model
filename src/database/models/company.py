@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import datetime as dt
 
-from sqlalchemy import ForeignKey, String, Text
+from sqlalchemy import BigInteger, ForeignKey, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.database.base import Base
@@ -43,7 +43,11 @@ class Company(Base, TimestampMixin):
     # active | suspended | delisted
 
     delisting_date: Mapped[dt.date | None] = mapped_column(nullable=True)
-    shares_outstanding: Mapped[int | None] = mapped_column(nullable=True)
+    # BigInteger, not the 32-bit default: real IDX share counts exceed
+    # 2^31 (BBCA alone has ~122.9 billion shares outstanding) -- hit live
+    # via a real psycopg.errors.NumericValueOutOfRange while testing this
+    # feature, same bug class as market_prices_raw.volume earlier.
+    shares_outstanding: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     free_float_pct: Mapped[float | None] = mapped_column(nullable=True)
 
     sector = relationship("SectorRegistry")

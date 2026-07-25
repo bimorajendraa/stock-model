@@ -24,6 +24,7 @@ from src.database.models.market import MarketPriceRaw
 from src.database.models.ops import PipelineRun
 from src.ingestion.corporate_actions import ingest_corporate_actions
 from src.ingestion.incremental import backfill_window, update_window
+from src.ingestion.market_cap import fetch_and_store_shares_outstanding, rank_companies_by_market_cap
 from src.ingestion.market_data import ingest_ohlcv
 from src.ingestion.reconciliation import reconcile_and_store
 from src.ingestion.resilience import CircuitBreaker, RateLimiter
@@ -403,4 +404,53 @@ def cmd_market_build_clean(session: Session, settings: Settings, offset: int = 0
         f"\nBuild-clean summary: {len(companies)} companies, {total_written} rows written, "
         f"{total_outliers} outliers flagged, {total_skipped} skipped (no raw data)"
     )
+    return 0
+
+
+def cmd_market_fetch_marketcap(session: Session, settings: Settings, offset: int = 0, limit: int | None = None) -> int:
+    """Fetches shares_outstanding via Yahoo Finance fast_info for a slice
+    of companies -- network-bound, chunk this like backfill for a
+    full-universe run."""
+    run = _start_pipeline_run(session, "market_fetch_marketcap")
+    all_companies = list(session.scalars(select(Company).order_by(Company.ticker)))
+    companies = all_companies[offset : offset + limit] if limit is not None else all_companies[offset:]
+    if not companies:
+        _finish_pipeline_run(session, run, 0, 0, "no companies in database")
+        print("FAILED: no companies in database.")
+        return 1
+
+    rate_limiter = RateLimiter(settings.ohlcv_request_delay_seconds)
+    breaker = CircuitBreaker(failure_threshold=15)
+    total_ok = 0
+    total_failed = 0
+
+    for company in companies:
+        breaker.check()
+        rate_limiter.wait()
+        outcome = fetch_and_store_shares_outstanding(session, company.ticker)
+        session.commit()
+        if outcome.skipped_reason:
+            breaker.record_failure()
+            total_failed += 1
+            print(f"{company.ticker}: SKIPPED ({outcome.skipped_reason})")
+        else:
+            breaker.record_success()
+            total_ok += 1
+            print(f"{company.ticker}: shares_outstanding={outcome.shares_outstanding}")
+
+    _finish_pipeline_run(session, run, total_ok, total_failed, None)
+    print(f"\nFetch-marketcap summary: {len(companies)} companies, {total_ok} ok, {total_failed} failed")
+    return 0 if total_ok > 0 else 1
+
+
+def cmd_market_top_marketcap(session: Session, count: int) -> int:
+    """Pure DB read (no network) -- prints the top N companies by
+    market_cap = shares_outstanding * latest stored close."""
+    ranked = rank_companies_by_market_cap(session, count)
+    if not ranked:
+        print("No companies have both shares_outstanding and price data yet -- run `market fetch-marketcap` first.")
+        return 1
+    for i, r in enumerate(ranked, 1):
+        print(f"{i:>3}. {r.ticker:<8} {r.company_name:<40} mcap=Rp{r.market_cap:,.0f} (close={r.latest_close} @ {r.price_date})")
+    print(",".join(r.ticker for r in ranked))
     return 0

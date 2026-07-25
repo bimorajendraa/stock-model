@@ -10,10 +10,19 @@ from src.database.models.company import Company
 from src.features.technical.pipeline import compute_technical_features
 
 
-def cmd_features_compute_technical(session: Session, settings: Settings, offset: int = 0, limit: int | None = None) -> int:
+def cmd_features_compute_technical(
+    session: Session,
+    settings: Settings,
+    offset: int = 0,
+    limit: int | None = None,
+    tickers: list[str] | None = None,
+) -> int:
     run = _start_pipeline_run(session, "features_compute_technical")
-    all_companies = list(session.scalars(select(Company).order_by(Company.ticker)))
-    companies = all_companies[offset : offset + limit] if limit is not None else all_companies[offset:]
+    if tickers:
+        companies = [c for c in (session.scalar(select(Company).where(Company.ticker == t)) for t in tickers) if c]
+    else:
+        all_companies = list(session.scalars(select(Company).order_by(Company.ticker)))
+        companies = all_companies[offset : offset + limit] if limit is not None else all_companies[offset:]
     if not companies:
         _finish_pipeline_run(session, run, 0, 0, "no companies in database")
         print("FAILED: no companies in database.")

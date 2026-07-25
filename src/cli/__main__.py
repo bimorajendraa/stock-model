@@ -23,8 +23,10 @@ from src.cli.market import (
     cmd_corporate_actions_sync,
     cmd_market_backfill,
     cmd_market_build_clean,
+    cmd_market_fetch_marketcap,
     cmd_market_reconcile,
     cmd_market_smoke_test,
+    cmd_market_top_marketcap,
     cmd_market_update,
     cmd_providers_check,
 )
@@ -61,6 +63,13 @@ def build_parser() -> argparse.ArgumentParser:
     build_clean.add_argument("--offset", type=int, default=0)
     build_clean.add_argument("--limit", type=int, default=None)
 
+    fetch_mcap = market_sub.add_parser("fetch-marketcap", help="Fetch shares_outstanding via Yahoo Finance fast_info")
+    fetch_mcap.add_argument("--offset", type=int, default=0)
+    fetch_mcap.add_argument("--limit", type=int, default=None)
+
+    top_mcap = market_sub.add_parser("top-marketcap", help="Print top N companies by market cap (DB-only, no network)")
+    top_mcap.add_argument("--count", type=int, default=50)
+
     ca = subparsers.add_parser("corporate-actions", help="Corporate action commands")
     ca_sub = ca.add_subparsers(dest="action", required=True)
     ca_sync = ca_sub.add_parser("sync", help="Sync corporate actions for one ticker")
@@ -71,6 +80,7 @@ def build_parser() -> argparse.ArgumentParser:
     compute_technical = features_sub.add_parser("compute-technical", help="Compute technical indicators into technical_features")
     compute_technical.add_argument("--offset", type=int, default=0)
     compute_technical.add_argument("--limit", type=int, default=None)
+    compute_technical.add_argument("--tickers", type=str, default=None, help="Comma-separated ticker list, overrides --offset/--limit")
 
     return parser
 
@@ -94,10 +104,15 @@ def main(argv: list[str] | None = None) -> int:
             return cmd_market_reconcile(session, settings, args.count)
         if args.group == "market" and args.action == "build-clean":
             return cmd_market_build_clean(session, settings, args.offset, args.limit)
+        if args.group == "market" and args.action == "fetch-marketcap":
+            return cmd_market_fetch_marketcap(session, settings, args.offset, args.limit)
+        if args.group == "market" and args.action == "top-marketcap":
+            return cmd_market_top_marketcap(session, args.count)
         if args.group == "corporate-actions" and args.action == "sync":
             return cmd_corporate_actions_sync(session, settings, args.ticker)
         if args.group == "features" and args.action == "compute-technical":
-            return cmd_features_compute_technical(session, settings, args.offset, args.limit)
+            tickers = args.tickers.split(",") if args.tickers else None
+            return cmd_features_compute_technical(session, settings, args.offset, args.limit, tickers)
 
     parser.error("unknown command")
     return 2
