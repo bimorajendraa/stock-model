@@ -29,6 +29,9 @@ app, `docker-compose.yml` (`db` + `api`), ADRs (`docs/adr/`).
   non-equity codes in Twelve Data's own listing, not a bug), idempotency
   proven, two real bugs found and fixed via live smoke testing (32-bit
   volume overflow, Postgres parameter-count limit on large backfills).
+- Preprocessing into `market_prices_clean` (`docs/market_data.md`):
+  1,706,497 rows across 944 companies, 1:1 with raw, 226 bars flagged
+  (not deleted) as outliers.
 - Provisional multi-source corporate actions (`docs/corporate_actions.md`)
   and cross-provider reconciliation (IDX itself is not reachable -- see
   `docs/data_sources.md`).

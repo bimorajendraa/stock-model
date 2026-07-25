@@ -85,6 +85,29 @@ holidays (no citable official holiday API found) -- weekends are the only
 modeled exclusion; a 1-3 trading-day tolerance before `stale` absorbs an
 unmodeled holiday without misreporting it as a data failure.
 
+## Preprocessing: market_prices_raw -> market_prices_clean
+
+`src/preprocessing/market_prices.py::build_clean_prices` (spec section
+6.1). Conservative by design:
+- Missing trading days are never filled -- a gap stays a gap.
+- Outliers are flagged (`is_outlier_flagged`, >35% day-over-day close
+  change -- a heuristic, not a precise IDX ARA/ARB model), never deleted.
+- `adjusted_close` resolves via `PRICE_ADJUSTMENT_POLICY`
+  (`src/common/price_adjustment.py`) -- with no `officially_verified`
+  corporate actions yet, this currently always resolves to the provider's
+  own adjusted close.
+- `market_cap` stays `NULL` (needs `shares_outstanding`, not available
+  from any adapter yet).
+- Lineage is attributed to `AccessType.INTERNAL_DERIVED` (a dedicated
+  access tier for platform-computed rows, not an external source) rather
+  than overloading `OFFICIAL` or `FALLBACK_PROVIDER`.
+
+Run for real against the full universe on 2026-07-25: **1,706,497 rows
+written across 944 companies, exactly matching the raw row count 1:1**
+(3 companies skipped -- the same 3 non-equity tickers with no raw data
+to begin with). **226 bars flagged as outliers** (~0.01% of rows) --
+kept in the data, not removed, for later review.
+
 ## CLI
 
 ```
@@ -92,8 +115,10 @@ python -m src.cli providers check
 python -m src.cli market smoke-test --count 10
 python -m src.cli market backfill --count 50
 python -m src.cli market backfill --ticker BBCA
+python -m src.cli market backfill --offset 0 --limit 150   # chunked full-universe run
 python -m src.cli market update
 python -m src.cli market reconcile --count 5
+python -m src.cli market build-clean --offset 0 --limit 150
 ```
 
 All commands record a `pipeline_runs` row and return a non-zero exit code
