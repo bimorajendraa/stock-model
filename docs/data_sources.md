@@ -69,12 +69,14 @@ Findings, so this isn't re-investigated from scratch later:
   contract wasn't verified before this was written, so it's left as
   `NotImplementedError` rather than guessed.
 - **Twelve Data's own `/stocks` listing has a data quality issue**: it
-  includes `IDXSMC.COM`, which is not a real tradable equity (Yahoo
-  Finance correctly returns 404 for `IDXSMC.COM.JK` -- almost certainly an
-  index/composite identifier misclassified as a company). Surfaced during
-  the Tahap 2 backfill smoke test; handled gracefully (skipped, logged,
-  did not crash the batch), not silently ignored. A reminder that "official
-  API returned it" still isn't the same as "it's real data" -- ingestion
+  includes at least 3 non-equity entries -- `IDXSMC.COM`, `I.GRADE`,
+  `IDXSMC.LIQ` -- none of which are real tradable equities (Yahoo Finance
+  correctly returns 404 for all three `.JK` symbols; these read as IDX
+  index/composite codes misclassified as companies). Surfaced during the
+  Tahap 2 full-universe backfill (3 of 947 companies); handled gracefully
+  (skipped, logged, did not crash the batch), not silently ignored. A
+  reminder that "official API returned it" still isn't the same as "it's
+  real data" -- ingestion
   code has to handle upstream data quality issues, not just its own.
 - **Sectors.app** (`src/data_sources/market/sectors_app.py`) -- IDX-focused,
   implemented directly against the live OpenAPI schema at
@@ -126,22 +128,33 @@ rule) -- it only adds new tickers and updates names of existing ones.
 
 ## OHLCV backfill: real results (2026-07-25)
 
-`python -m src.cli market backfill --count 50`, no fixtures, real Yahoo
-Finance data (Twelve Data's `demo` key can't fetch prices, only
-listings -- see `docs/provider_capabilities.md`):
+Full universe backfilled, not just a sample: `python -m src.cli market
+backfill --offset N --limit 150`, run in 7 sequential chunks to keep each
+process run bounded in time (see ADR-style rationale in the commit that
+added `--offset`/`--limit`), no fixtures, real Yahoo Finance data
+(Twelve Data's `demo` key can't fetch prices, only listings -- see
+`docs/provider_capabilities.md`):
 
-- 49/50 companies succeeded; the 1 failure is `IDXSMC.COM` (see above --
-  not a real equity, not a bug in ingestion).
-- 81,709 OHLCV rows written, spanning 2016-07-25 to 2026-07-24 (the
-  10-year backfill window; several tickers have shorter real history
-  because they IPO'd more recently -- e.g. AADI only goes back to
-  2024-12-05).
-- 5 bars quarantined (real inconsistent OHLC in the source data -- e.g.
-  `high < open` -- correctly caught by `validate_ohlcv_bar` rather than
-  written to `market_prices_raw`).
-- Idempotency verified on the initial 10-ticker smoke test: re-running the
-  same window produced zero row-count growth and updated one bar's values
-  in place.
+- **944 of 947 companies succeeded** (99.7%). The 3 failures are
+  `IDXSMC.COM`, `I.GRADE`, and `IDXSMC.LIQ` -- all confirmed non-equity
+  entries (IDX index/composite codes, Yahoo Finance correctly 404s their
+  `.JK` symbol) present in Twelve Data's own `/stocks` listing, not a bug
+  in ingestion. See the company-master-data-quality note above.
+- **1,706,497 OHLCV rows written**, spanning 2016-07-25 to 2026-07-24 (the
+  10-year backfill window; many tickers have shorter real history because
+  they IPO'd more recently -- e.g. AADI only goes back to 2024-12-05).
+- **104 bars quarantined** across the full run (real inconsistent OHLC in
+  the source data -- e.g. `high < open` -- correctly caught by
+  `validate_ohlcv_bar` rather than written to `market_prices_raw`).
+- Idempotency verified on the initial 10-ticker smoke test before the full
+  run: re-running the same window produced zero row-count growth and
+  updated one bar's values in place. The full 944-company run reuses the
+  identical upsert code path.
+- Two real bugs were found and fixed by this process before the full run
+  (see the "test: add live market ingestion smoke test" commit): a 32-bit
+  volume column overflow, and a Postgres 65535-bound-parameter limit hit
+  by a single large multi-row INSERT. Both required actually running
+  against real data to discover -- fixtures wouldn't have caught either.
 
 ## News source weighting (spec §3.6)
 

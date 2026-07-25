@@ -24,10 +24,11 @@ app, `docker-compose.yml` (`db` + `api`), ADRs (`docs/adr/`).
   capability probe, not just "key present") with a Yahoo Finance
   research-only fallback, refused outright in production mode.
 - Real OHLCV ingestion with validation + quarantine
-  (`docs/market_data.md`): 81,709 real rows across 49 companies
-  (2016-2026), idempotency proven, two real bugs found and fixed via live
-  smoke testing (32-bit volume overflow, Postgres parameter-count limit
-  on large backfills).
+  (`docs/market_data.md`): full universe backfilled -- 1,706,497 rows
+  across 944 of 947 companies (2016-2026; the 3 that failed are confirmed
+  non-equity codes in Twelve Data's own listing, not a bug), idempotency
+  proven, two real bugs found and fixed via live smoke testing (32-bit
+  volume overflow, Postgres parameter-count limit on large backfills).
 - Provisional multi-source corporate actions (`docs/corporate_actions.md`)
   and cross-provider reconciliation (IDX itself is not reachable -- see
   `docs/data_sources.md`).
