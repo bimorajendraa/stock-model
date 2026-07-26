@@ -9,7 +9,7 @@ dashboard. See the full spec context in `docs/`.
 **This is a research/decision-support tool, not a trading system and not a
 guarantee of profit.** See `docs/risk_and_limitations.md`.
 
-## Status: Tahap 4 in progress (model training)
+## Status: Tahap 5 in progress (valuation + recommendation)
 
 **Tahap 1 (scaffold)** -- done: full repo structure, 32-table schema +
 Alembic migrations with mandatory source-lineage columns on every fact
@@ -43,13 +43,57 @@ app, `docker-compose.yml` (`db` + `api`), ADRs (`docs/adr/`).
   backfill/update/reconcile/fetch-marketcap/top-marketcap,
   corporate-actions sync).
 
-**Tahap 3 (technical features)** -- started (`docs/technical_features.md`):
-- 36 technical indicators (trend/momentum/volatility/volume) implemented
-  from scratch in pandas, computed on adjustment-scaled OHLC. Run for real
-  against the top 50 companies by market cap: 3.5M+ feature rows written.
-- Deferred: market-relative features (need an index series not yet
-  ingested), support/resistance ensemble, fundamental/sector/sentiment
-  features.
+**Tahap 3 (technical + macro/industry features)** -- started
+(`docs/technical_features.md`, `docs/macro_data.md`):
+- 45 technical indicators (trend/momentum/volatility/volume +
+  market-relative) implemented from scratch in pandas, computed on
+  adjustment-scaled OHLC. Run for real against the top 50 companies by
+  market cap: 4.28M feature rows written.
+- Macro/industry-wide series (`docs/macro_data.md`): `YahooFinanceMacroAdapter`
+  (USD/IDR FX, IHSG composite, US 10Y Treasury yield -- global proxy, NOT
+  BI-Rate -- WTI crude) plus `BPSMacroAdapter`, added once the user
+  registered and provided a real, free BPS Web API key -- real national
+  monthly inflation, 126 points, 2016-2026. 2 real bugs found and fixed
+  live (BPS's 3-year `th` request cap; an undocumented no-separator key
+  encoding in its response) plus a real point-in-time bug found across
+  *both* adapters (a decade of backfilled points was being stamped
+  `available_at=now` instead of each point's own real availability date)
+  -- 10,729 total points across 5 series. Real BI-Rate itself remains
+  uncovered (Bank Indonesia's site is HTML-only, no API).
+- Market-relative technical features (`beta_60/252`, `alpha_60/252` --
+  a simplified excess-return proxy, explicitly NOT CAPM alpha,
+  `relative_strength_5/20/60/120/252`) vs. IHSG -- unblocked once IHSG
+  data existed, run for real on the same top-50 set. Testing this against
+  a live DB caught (and fixed) two real bugs, both in synthetic test
+  fixtures' calendar assumptions, not the pipeline itself -- verified by
+  checking against real BBCA data first (`docs/technical_features.md` has
+  the full account).
+- Real sector/industry classification (`docs/sector_classification.md`):
+  `yfinance` gives real GICS-style sector/industry for IDX tickers,
+  fixing a gap flagged since Tahap 2 (`companies.sector_registry_id` had
+  been NULL for every company). 2 real DB-constraint bugs found and
+  fixed live (a global unique constraint collision across industries in
+  the same broad sector; a 32-char column overflow). 50/50 companies
+  classified into 26 real sectors, plus a sector-relative fundamental
+  metric (percentile rank of ROE/net margin/debt-to-equity within real
+  sector peers, needing >=3 peers) -- 72 metric rows across the 4
+  (sector, industry) groups with enough real peers.
+- News ingestion (`docs/news.md`): 4 real RSS feeds (Antara News, CNBC
+  Indonesia, Detik Finance, Katadata -- Kontan's feed is empty, Bisnis.com/
+  IDX/Investor Daily are blocked or 404), upserted + ticker-entity-linked
+  against the full real company universe. A real false-positive bug found
+  live (`EMAS`/`NAIK` are real tickers that are also ordinary Indonesian
+  words) fixed by requiring case-sensitive ticker matching. Real run: 232
+  articles, 26 entity links. A Prefect flow wrapping the same logic exists
+  (`src/orchestration/news_flow.py`) matching ADR-0002, plus a Windows
+  Scheduled Task for daily 06:00 automation -- registered successfully but
+  **not yet confirmed to fire reliably unattended** (diagnosed as an
+  `Interactive`-logon-type issue that needs an elevated session to fix;
+  see `docs/news.md`'s scheduling section for the exact command to run).
+- Deferred: support/resistance ensemble, real per-company sector-specific
+  disclosed metrics (NPL/NIM/CAR etc. -- still no real source), sentiment
+  *scoring* (news is now ingested, but no sentiment signal is computed
+  from it yet).
 
 **Tahap 4 (model training)** -- baselines only (`docs/model_methodology.md`):
 - Point-in-time labeling, date-based train/validation/test split with
@@ -59,14 +103,106 @@ app, `docker-compose.yml` (`db` + `api`), ADRs (`docs/adr/`).
   naive baseline on held-out test data, and random forest/MLP show clear
   overfitting (train AUC 0.65-0.69 vs. test AUC 0.52-0.53) despite
   regularization -- consistent with technical-only features being close
-  to their practical ceiling; the spec's own architecture expects
-  fundamental/sentiment/macro branches too, none of which exist yet.
-  **No model here is used by anything -- there is no recommendation
-  engine yet.**
+  to their practical ceiling.
+- Re-run with the fundamental ratios (below) attached as extra features,
+  point-in-time-joined: **another honest negative result**, not a win --
+  the dataset shrinks ~76% (fundamentals only cover back to ~2022),
+  random forest's overfitting got strictly worse (train AUC 0.84, test
+  AUC *dropped* to 0.51), and the small test-AUC upticks for logistic
+  regression/MLP are within noise on a 1,205-row test set, not evidence
+  fundamentals help.
+- Follow-up: tried longer label horizons (60/120/252 days, not just 20)
+  to see if fundamentals just needed a timescale closer to how ratios
+  like ROE actually matter. Technical+fundamental **couldn't even be
+  evaluated** at 120/252 days -- the ~4-year fundamentals window is too
+  short once embargo/validation/test splits are subtracted, splits come
+  up empty (a real data-depth blocker, not a feature-completeness one).
+  Technical-only alone: h=120 logistic regression hit the best test AUC
+  seen yet (0.559, small train/test gap) but that's 1 cell out of 40
+  tried across two sessions -- flagged as "watch, don't trust" per spec
+  section 18's multiple-comparisons caution, not a discovered edge. h=252
+  was *worse than random* across every model (0.39-0.46 test AUC) --
+  plausible regime shift or autocorrelation-collapsed effective sample
+  size, reported plainly either way.
+- Follow-up 2: tested whether the ceiling is a top-50-mega-cap-specific
+  efficiency artifact -- reran technical-only on a genuinely different
+  tier, ranks 201-250 by market cap (~Rp4-6T, 8-19x smaller than top-50's
+  cutoff), real technical features computed for real (3.36M rows, 50/50
+  companies). Result: **no small-cap edge** -- h=20 results are
+  indistinguishable from mega-cap (within 0.01 AUC on every model), and
+  the h=120 "best result so far" (0.559) **failed to replicate**
+  out-of-sample on mid-caps (0.485, actually below random) -- direct
+  evidence it was noise from testing many combinations, not a real edge.
+  Three independent angles (more features, longer horizons, different
+  market-cap tier) now all point the same way: no robust edge found yet
+  from technical/fundamental-only signals on this exchange, which is
+  meaningfully stronger evidence for a structural ceiling than any one
+  result alone -- though genuinely new information types (macro, news/
+  sentiment, still unbuilt) remain untested. **No model here is used by
+  anything -- there is no recommendation engine yet.**
 
-**Not yet implemented**: fundamentals/macro/industry/news adapters,
-feature engineering, models, valuation, recommendations, dashboard. See
-`docs/architecture.md` and the phase plan (Tahap 3-7) in `docs/adr/`.
+**Fundamentals (Tahap 3.3 + 8 branches)** -- raw statement ingestion and
+ratio computation both done (`docs/fundamentals.md`):
+`YahooFinanceFundamentalsAdapter` (research_only, same status as the
+OHLCV adapter), a 30-code provider-agnostic account taxonomy, 461
+statements / 11,909 line items across 50/50 companies, sector differences
+(banks vs. non-banks) correctly reflected as omitted line items rather
+than fabricated zeros. 13 fundamental ratios (margins, ROE/ROA, DER,
+current ratio, FCF/OCF margin, book value/share, point-in-time P/E and
+P/B) computed deterministically -- 5,811 ratio rows / 50 companies, real
+BBCA figures sanity-checked (ROE 20.4%, P/B 2.56x). Honest, documented
+limitations: Yahoo doesn't expose real filing dates, so `available_at` is
+a conservative estimate (period_end + 120/60 days), never claimed as a
+real disclosure date; only one provider exists (no redundancy yet). A
+follow-up audit of this step caught and fixed a real bug (a test was
+destroying real BBCA production data via unscoped cleanup) -- see
+`docs/fundamentals.md` for the full account.
+
+**Valuation (Tahap 5)** -- one method done (`docs/valuation.md`):
+**self-relative (own-history) multiple valuation** -- a company's latest
+EPS/book-value-per-share x the 25th/50th/75th percentile of its OWN
+historical P/E/P/B range, needing no external assumption (no discount
+rate, no peer group). Chosen over DCF/peer-relative specifically because
+those need data this project doesn't have yet -- a real discount-rate
+proxy (no macro adapter) and real sector classification (no verified free
+source) -- not fabricating either rather than guessing. Run for real on
+the top-50 set: 50/50 companies, 42 using both P/E+P/B methods, 8 falling
+back to P/B-only (loss-making companies where P/E is conventionally
+undefined), spot-checked against real prices (e.g. BBCA's fair value sits
+close to its current price; TLKM/ASII show larger gaps). Honestly
+documented limitation: this measures "cheap/expensive vs. its own past,"
+not intrinsic value, and that past is both short (~4 years) and partly
+circular (built from past market prices).
+
+**Recommendation engine (Tahap 5, spec section 21)** -- one deterministic
+engine done (`docs/recommendation.md`), combining valuation position +
+fundamental quality (net margin, ROE, debt-to-equity) into a labeled
+call (`LAYAK_DIBELI` | `AKUMULASI_BERTAHAP` | `TUNGGU_HARGA` | `HOLD` |
+`HINDARI` | `DATA_TIDAK_MENCUKUPI`). **Deliberately uses no ML
+prediction at all** -- Tahap 4's models never showed a validated edge
+across three independent tests, and feeding an unproven signal into a
+recommendation would manufacture false confidence; this is recorded
+explicitly per result (`scores.ml_signal_used = false`), not a silent
+omission. Weak fundamentals always -> `HINDARI` regardless of price (a
+cheap stock with weak fundamentals is a value trap, not a bargain). Run
+for real on the top-50 set: 50/50 companies, 0 `DATA_TIDAK_MENCUKUPI`,
+a real varied distribution (25 HOLD, 13 TUNGGU_HARGA, 7
+AKUMULASI_BERTAHAP, 4 HINDARI, 1 LAYAK_DIBELI), 7 companies flagged
+`high_leverage`, results spot-checked for consistency with the valuation
+numbers above.
+
+**Not yet implemented**: real BI-Rate (BPS inflation now covered, BI's
+own site remains HTML-only), real per-company sector-specific disclosed
+metrics (NPL/NIM/CAR etc.), sentiment scoring on top of the now-ingested
+news, a confirmed-reliable unattended daily news schedule (task
+registered, not yet verified to fire -- `docs/news.md`), company-name-alias
+entity linking, full-universe sector classification (only top-50 + 2
+stragglers so far), feature engineering beyond technical + fundamental
+ratios, models beyond the Tahap 4 baselines (no proven edge yet),
+sector-relative valuation (sector data now real, but not wired into
+`docs/valuation.md` yet), DCF, investment_style classification, a
+validated ML/sentiment signal in the recommendation engine, dashboard.
+See `docs/architecture.md` and the phase plan (Tahap 3-7) in `docs/adr/`.
 
 ## Prerequisites
 
@@ -149,9 +285,25 @@ limitations.
 
 ## Pipelines / feature engineering / training / dashboard (Tahap 3+)
 
-Not yet implemented -- these instructions are added as each phase ships
-(Tahap 3: features; Tahap 4: models; Tahap 5: valuation + recommendations;
-Tahap 6: API/dashboard/scheduler; Tahap 7: tests/docs/CI).
+```bash
+python -m src.cli features compute-technical --tickers BBCA,TLKM,ASII
+python -m src.cli fundamentals sync --tickers BBCA,TLKM,ASII
+python -m src.cli features compute-fundamental-ratios --tickers BBCA,TLKM,ASII
+python -m src.cli macro sync
+python -m src.cli sector classify --tickers BBCA,TLKM,ASII
+python -m src.cli sector compute-relative-metrics
+python -m src.cli valuation compute --tickers BBCA,TLKM,ASII
+python -m src.cli recommendation compute --tickers BBCA,TLKM,ASII
+python -m src.cli news sync
+```
+
+See `docs/technical_features.md`, `docs/fundamentals.md`,
+`docs/sector_classification.md`,
+`docs/macro_data.md`, `docs/valuation.md`, `docs/recommendation.md`, and
+`docs/news.md`.
+Model training (Tahap 4 baselines) is script-driven, not yet a CLI
+command -- see `docs/model_methodology.md`. Dashboard (Tahap 6) not yet
+implemented.
 
 ## Limitations of free/public data sources
 

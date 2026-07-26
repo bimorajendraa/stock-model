@@ -1,1 +1,1 @@
-"""Placeholder package -- implemented in Tahap 6 (Prefect flows). No business logic yet."""
+"""Prefect flows (spec/ADR-0002's chosen orchestrator). news_flow.py implemented (Tahap 3)."""
