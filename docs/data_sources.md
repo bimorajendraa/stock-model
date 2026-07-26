@@ -2,8 +2,13 @@
 
 Status: Tahap 2 -- market-data adapters, capability-aware provider
 selection, and real ingestion implemented and verified against live data
-(81,709 real OHLCV rows across 49 companies, see below); fundamentals/
-macro/industry/news adapters not yet started. This documents the category
+(81,709 real OHLCV rows across 49 companies, see below); one fundamentals
+adapter implemented and verified (see `docs/fundamentals.md`); one macro
+adapter implemented and verified for FX/global-yield/index/commodity
+series (see `docs/macro_data.md` -- real Indonesia-specific series like
+BI-Rate/BPS inflation are a documented gap, not silently worked around);
+industry (per-sector metrics)/news adapters not started. This documents
+the category
 structure and access-tier policy adapters must follow (spec §3, §2.5-10).
 It intentionally does not name specific vendor endpoints/URLs until an
 adapter for them is actually implemented and reviewed against their terms
@@ -32,9 +37,9 @@ workaround" problem (`TermsOfServiceViolation` in
 | Category | Interface | Spec section | Adapter count requirement |
 |---|---|---|---|
 | Market data (OHLCV, corporate actions) | `src/data_sources/market/base.py::MarketDataProvider` | §3.2 | >=2 adapters -- **done**: `twelve_data.py`, `sectors_app.py`, `yahoo_finance.py` (research-only fallback) |
-| Fundamentals (financial statements) | `src/data_sources/fundamentals/base.py::FundamentalsProvider` | §3.3 | prioritize XBRL/structured over PDF/OCR |
-| Macro (BI-Rate, inflation, FX, global macro) | `src/data_sources/macro/base.py::MacroDataProvider` | §3.4 | one per publisher |
-| Industry/sector-specific metrics | `src/data_sources/industry/base.py::IndustryDataProvider` | §3.5 | one per sector where disclosed |
+| Fundamentals (financial statements) | `src/data_sources/fundamentals/base.py::FundamentalsProvider` | §3.3 | prioritize XBRL/structured over PDF/OCR -- **1 of 2+ done**: `yahoo_finance.py` (research-only, see `docs/fundamentals.md`) |
+| Macro (BI-Rate, inflation, FX, global macro) | `src/data_sources/macro/base.py::MacroDataProvider` | §3.4 | one per publisher -- **1 of 2+ done**: `yahoo_finance.py` (research-only, FX/global-yield/IHSG/commodity only, see `docs/macro_data.md`) |
+| Industry/sector-specific metrics | `src/data_sources/industry/base.py::IndustryDataProvider` | §3.5 | one per sector where disclosed -- blocked on real sector classification data (see company-master-data-quality note below) |
 | News | `src/data_sources/news/base.py::NewsProvider` | §3.6 | target >=5 distinct domains per company analysis, cap ~10 |
 
 ## Market data: what was actually investigated (2026-07-24)
@@ -155,6 +160,22 @@ added `--offset`/`--limit`), no fixtures, real Yahoo Finance data
   volume column overflow, and a Postgres 65535-bound-parameter limit hit
   by a single large multi-row INSERT. Both required actually running
   against real data to discover -- fixtures wouldn't have caught either.
+
+## Macro/industry-wide series: what was actually investigated (2026-07-25)
+
+Full account in `docs/macro_data.md` -- summary here for the same
+"checked live, not from memory" discipline as the market-data
+investigation above:
+
+- **BPS Web API** (real, documented, free, covers inflation/CPI) --
+  needs a registered API key this project doesn't have. Documented gap,
+  not worked around.
+- **Bank Indonesia's site** (BI-Rate) -- HTML-only, no API/RSS found
+  live. Excluded, same reasoning as Stooq's JS-gated download below.
+- **yfinance** -- real, keyless data for `USDIDR=X` (FX), `^JKSE`
+  (IHSG), `^TNX` (US 10Y yield, a *global* proxy, explicitly NOT a
+  BI-Rate substitute), `CL=F` (WTI crude). Implemented; run for real:
+  10,603 points across 4 series, 2016-2026 daily history.
 
 ## News source weighting (spec §3.6)
 
