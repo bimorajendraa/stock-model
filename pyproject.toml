@@ -52,6 +52,12 @@ markers = [
 line-length = 110
 target-version = "py311"
 
+[tool.ruff.lint.per-file-ignores]
+# FastAPI's own documented pattern is Depends()/Query() as an argument
+# default -- bugbear's generic "no function calls in defaults" advice
+# doesn't apply to it.
+"apps/api/**" = ["B008"]
+
 [tool.mypy]
 python_version = "3.11"
 ignore_missing_imports = true
