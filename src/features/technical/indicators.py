@@ -9,13 +9,14 @@ Every function's docstring states the exact convention used (e.g. Wilder's
 smoothing vs. simple moving average) because these have historically been
 a common source of subtle bugs/disagreement between charting platforms.
 
-Market-relative features (beta, alpha, relative strength vs. IHSG/sector)
-are NOT implemented here -- they need an index price series, which no
-macro/industry adapter ingests yet (Tahap 3+ backlog, see
-docs/data_sources.md). Support/resistance (swing/fractal/pivot ensemble)
-and turnover_ratio (needs shares_outstanding, not available from any
-adapter -- see docs/data_sources.md) are also deferred for the same
-"needs data this project doesn't have yet" reason, not overlooked.
+Market-relative features (beta, alpha, relative strength vs. IHSG) ARE
+now implemented, but in ``market_relative.py``, not here -- they need the
+IHSG index series (``docs/macro_data.md``, ``industry_series`` table)
+alongside a company's own close series, a different input shape than
+every other function in this module. Support/resistance (swing/fractal/
+pivot ensemble) and turnover_ratio (needs shares_outstanding, not
+available from any adapter -- see docs/data_sources.md) are still
+deferred for the "needs data this project doesn't have yet" reason.
 """
 from __future__ import annotations
 

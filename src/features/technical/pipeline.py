@@ -25,13 +25,16 @@ from sqlalchemy.orm import Session
 
 from src.database.models.company import Company
 from src.database.models.features import TechnicalFeature
+from src.database.models.macro import IndustrySeries
 from src.database.models.market import MarketPriceClean
 from src.features.technical import indicators as ind
+from src.features.technical import market_relative as mrel
 
-FEATURE_SET_VERSION = "v1"
+FEATURE_SET_VERSION = "v2"  # v2 adds market-relative features (beta/alpha/relative_strength vs IHSG)
 
 MOMENTUM_WINDOWS = (5, 20, 60, 120, 252)
 SMA_WINDOWS = (5, 10, 20, 50, 100, 200)
+BETA_ALPHA_WINDOWS = (60, 252)  # ~1 quarter and ~1 year, standard beta-estimation conventions
 
 
 @dataclasses.dataclass
@@ -64,6 +67,55 @@ def _load_clean_prices(session: Session, company_id: int) -> pd.DataFrame:
     for col in ("open", "high", "low", "close"):
         df[col] = df[col] * df["adjustment_factor"]
     return df
+
+
+def _load_ihsg_series(session: Session) -> pd.Series:
+    """IHSG (IDX Composite) daily close level, date-indexed -- from
+    ``industry_series`` (``docs/macro_data.md``). Not company-specific,
+    loaded once per call and reused; empty if the macro sync hasn't been
+    run yet, in which case market-relative features are simply not
+    computed (never fabricated) rather than erroring."""
+    rows = session.execute(
+        select(IndustrySeries.observation_date, IndustrySeries.value)
+        .where(IndustrySeries.series_code == "ihsg_composite")
+        .order_by(IndustrySeries.observation_date)
+    ).all()
+    if not rows:
+        return pd.Series(dtype=float)
+    index = pd.DatetimeIndex([r.observation_date for r in rows])
+    return pd.Series([float(r.value) for r in rows], index=index)
+
+
+def _compute_market_relative(df: pd.DataFrame, ihsg: pd.Series) -> dict[str, pd.Series]:
+    if ihsg.empty:
+        return {}
+
+    # Inner-align to dates both series actually have -- a stock's
+    # trading-halt gaps or IHSG's own missing dates must never be
+    # silently filled; unmatched dates just don't get a market-relative
+    # value for that row (same "insufficient" convention as every other
+    # indicator here).
+    market_close = ihsg.reindex(df.index)
+    if market_close.notna().sum() < min(BETA_ALPHA_WINDOWS):
+        return {}  # not enough overlapping history for even the shortest window -- longer windows
+        # naturally come back NaN via rolling's own min_periods and get dropped downstream,
+        # same as sma_200 on a company with <200 days of price history.
+
+    stock_returns = mrel.daily_returns(df["close"])
+    market_returns = mrel.daily_returns(market_close)
+
+    features: dict[str, pd.Series] = {}
+    for window in BETA_ALPHA_WINDOWS:
+        beta = mrel.rolling_beta(stock_returns, market_returns, window)
+        features[f"beta_{window}"] = beta
+        features[f"alpha_{window}"] = mrel.rolling_alpha(stock_returns, market_returns, beta)
+
+    for window in MOMENTUM_WINDOWS:
+        stock_momentum = ind.momentum_return(df["close"], window)
+        market_momentum = ind.momentum_return(market_close, window)
+        features[f"relative_strength_{window}"] = mrel.relative_strength(stock_momentum, market_momentum)
+
+    return features
 
 
 def _compute_all(df: pd.DataFrame) -> dict[str, pd.Series]:
@@ -129,6 +181,7 @@ def compute_technical_features(session: Session, ticker: str) -> TechnicalFeatur
 
     outcome.dates_processed = len(df)
     feature_series = _compute_all(df)
+    feature_series.update(_compute_market_relative(df, _load_ihsg_series(session)))
 
     rows = []
     for feature_name, series in feature_series.items():
