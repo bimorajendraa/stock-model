@@ -51,14 +51,24 @@ class BaselineComparisonResult:
 
 
 def run_baseline_comparison(
-    session: Session, tickers: list[str], horizon_days: int = 20, embargo_days: int = 10
+    session: Session,
+    tickers: list[str],
+    horizon_days: int = 20,
+    embargo_days: int = 10,
+    include_fundamentals: bool = False,
 ) -> tuple[list[BaselineComparisonResult], dict]:
-    df = build_labeled_dataset(session, tickers, horizons=(horizon_days,))
+    df = build_labeled_dataset(session, tickers, horizons=(horizon_days,), include_fundamentals=include_fundamentals)
     if df.empty:
         return [], {"error": "empty dataset"}
 
     feature_cols = _indicator_feature_columns(df)
     direction_col = f"direction_{horizon_days}d"
+    # Every feature column must be non-null, including fund_* ratio
+    # columns when include_fundamentals=True -- a row before a company's
+    # first-ever available statement genuinely has no fundamental data
+    # yet, and must be dropped rather than imputed (spec section 2.12/
+    # 6.3): this naturally truncates the usable date range to roughly
+    # when fundamentals coverage begins, not a bug.
     df = df.dropna(subset=[*feature_cols, "close", direction_col])
 
     parts, split = split_dataset(df, horizon_days, embargo_days)
@@ -66,7 +76,9 @@ def run_baseline_comparison(
 
     info = {
         "horizon_days": horizon_days,
+        "include_fundamentals": include_fundamentals,
         "n_features": len(feature_cols),
+        "n_fundamental_features": sum(1 for c in feature_cols if c.startswith("fund_")),
         "n_train": len(train),
         "n_validation": len(validation),
         "n_test": len(test),

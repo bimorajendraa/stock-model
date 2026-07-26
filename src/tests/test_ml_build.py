@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from src.database.models.company import Company
 from src.database.models.features import TechnicalFeature
+from src.database.models.fundamentals import FinancialRatio
 from src.database.models.market import MarketPriceClean
 from src.database.models.mixins import QualityStatus
 from src.database.models.ops import DataSourceRegistry
@@ -106,3 +107,66 @@ def test_split_dataset_produces_three_non_overlapping_parts(db_session, company_
     total = len(parts["train"]) + len(parts["validation"]) + len(parts["test"])
     assert total <= len(df)  # purging can only remove rows, never add
     assert total > 0
+
+
+@pytest.fixture()
+def company_with_fundamentals(db_session, company_with_features):
+    company = company_with_features
+    source = db_session.scalar(select(DataSourceRegistry).where(DataSourceRegistry.name == "fake_ml_source"))
+    now = dt.datetime.now(dt.UTC)
+    # price history fixture runs 2025-01-01 for 120 days
+    ratio_rows = [
+        FinancialRatio(
+            company_id=company.id, ratio_name="net_margin__annual", value=0.10, is_applicable=True,
+            computation_version="v1", source_id=source.id, retrieved_at=now,
+            available_at=dt.datetime(2025, 1, 20, tzinfo=dt.UTC), period_end=dt.date(2024, 12, 31),
+            currency="IDR", unit="unit", is_restated=False, quality_status=QualityStatus.VALID,
+        ),
+        FinancialRatio(
+            # A later (quarterly) statement supersedes the earlier annual
+            # one's value once it becomes available -- point-in-time
+            # "most recently known", not "always prefer annual".
+            company_id=company.id, ratio_name="net_margin__quarterly", value=0.20, is_applicable=True,
+            computation_version="v1", source_id=source.id, retrieved_at=now,
+            available_at=dt.datetime(2025, 3, 1, tzinfo=dt.UTC), period_end=dt.date(2025, 1, 31),
+            currency="IDR", unit="unit", is_restated=False, quality_status=QualityStatus.VALID,
+        ),
+        FinancialRatio(
+            company_id=company.id, ratio_name="roe__annual", value=None, is_applicable=False,
+            computation_version="v1", source_id=source.id, retrieved_at=now,
+            available_at=dt.datetime(2025, 1, 20, tzinfo=dt.UTC), period_end=dt.date(2024, 12, 31),
+            currency="IDR", unit="unit", is_restated=False, quality_status=QualityStatus.VALID,
+        ),
+    ]
+    db_session.add_all(ratio_rows)
+    db_session.commit()
+    yield company
+    db_session.query(FinancialRatio).filter(FinancialRatio.company_id == company.id).delete()
+    db_session.commit()
+
+
+def test_build_labeled_dataset_default_has_no_fundamental_columns(db_session, company_with_fundamentals):
+    # include_fundamentals defaults to False -- must not change behavior
+    # for any existing caller that doesn't opt in.
+    df = build_labeled_dataset(db_session, ["ZZZL"], horizons=(5,))
+    assert not any(c.startswith("fund_") for c in df.columns)
+
+
+def test_build_labeled_dataset_include_fundamentals_is_point_in_time(db_session, company_with_fundamentals):
+    df = build_labeled_dataset(db_session, ["ZZZL"], horizons=(5,), include_fundamentals=True)
+    assert "fund_net_margin" in df.columns
+
+    before = df[df["feature_date"] < dt.date(2025, 1, 20)]
+    mid = df[(df["feature_date"] >= dt.date(2025, 1, 20)) & (df["feature_date"] < dt.date(2025, 3, 1))]
+    after = df[df["feature_date"] >= dt.date(2025, 3, 1)]
+
+    assert not before.empty and not mid.empty and not after.empty
+    assert before["fund_net_margin"].isna().all()  # no statement public yet -- must not leak a future value back
+    assert (mid["fund_net_margin"] == 0.10).all()  # annual statement's value, once available
+    assert (after["fund_net_margin"] == 0.20).all()  # superseded once the later quarterly statement is available
+
+    # roe's only fixture row is is_applicable=False, and this fixture has
+    # no other company in the query, so fund_roe has zero applicable
+    # values anywhere in this dataset -- it must not appear as a phantom
+    # always-NaN column (never a fabricated 0 either way).
+    assert "fund_roe" not in df.columns
