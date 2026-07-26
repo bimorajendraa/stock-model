@@ -18,6 +18,9 @@ Examples:
     python -m src.cli sector classify --offset 0 --limit 150
     python -m src.cli news sync
     python -m src.cli news compute-sentiment
+    python -m src.cli sources audit
+    python -m src.cli sources audit --category macro
+    python -m src.cli sources report
 """
 from __future__ import annotations
 
@@ -43,6 +46,7 @@ from src.cli.market import (
 from src.cli.news import cmd_news_compute_sentiment, cmd_news_sync
 from src.cli.recommendation import cmd_recommendation_compute
 from src.cli.sector import cmd_sector_classify, cmd_sector_compute_relative_metrics
+from src.cli.sources import cmd_sources_audit, cmd_sources_report
 from src.cli.valuation import cmd_valuation_compute
 from src.config.settings import get_settings
 from src.database.session import make_engine
@@ -142,6 +146,12 @@ def build_parser() -> argparse.ArgumentParser:
     news_sentiment = news_sub.add_parser("compute-sentiment", help="Score unscored (article, company) pairs into news_sentiment")
     news_sentiment.add_argument("--limit", type=int, default=None)
 
+    sources = subparsers.add_parser("sources", help="Data source capability/health registry commands")
+    sources_sub = sources.add_subparsers(dest="action", required=True)
+    sources_audit = sources_sub.add_parser("audit", help="Probe every registered source and record real health status")
+    sources_audit.add_argument("--category", type=str, default=None, help="Only audit sources in this data_category")
+    sources_sub.add_parser("report", help="Print the last recorded audit result for every registered source")
+
     return parser
 
 
@@ -197,6 +207,10 @@ def main(argv: list[str] | None = None) -> int:
             return cmd_news_sync(session, settings, args.lookback_days)
         if args.group == "news" and args.action == "compute-sentiment":
             return cmd_news_compute_sentiment(session, settings, args.limit)
+        if args.group == "sources" and args.action == "audit":
+            return cmd_sources_audit(session, settings, args.category)
+        if args.group == "sources" and args.action == "report":
+            return cmd_sources_report(session, settings)
 
     parser.error("unknown command")
     return 2

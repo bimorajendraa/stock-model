@@ -40,7 +40,13 @@ from src.database.models.ml import (
     ValuationResult,
 )
 from src.database.models.news import NewsArticle, NewsEntity, NewsSentiment, ReputationEvent
-from src.database.models.ops import Alert, DataQualityResult, DataSourceRegistry, PipelineRun
+from src.database.models.ops import (
+    Alert,
+    DataQualityResult,
+    DataSourceCapability,
+    DataSourceRegistry,
+    PipelineRun,
+)
 from src.database.models.sector import SectorSpecificMetric
 
 __all__ = [
@@ -50,6 +56,7 @@ __all__ = [
     "CompanyProviderSymbol",
     "CorporateAction",
     "DataQualityResult",
+    "DataSourceCapability",
     "DataSourceRegistry",
     "Dividend",
     "FinancialRatio",

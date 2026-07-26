@@ -44,6 +44,7 @@ class Settings(BaseSettings):
     twelve_data_api_key: str | None = Field(default=None, alias="TWELVE_DATA_API_KEY")
     sectors_app_api_key: str | None = Field(default=None, alias="SECTORS_APP_API_KEY")
     bps_api_key: str | None = Field(default=None, alias="BPS_API_KEY")
+    fred_api_key: str | None = Field(default=None, alias="FRED_API_KEY")
 
     # --- Market data provider selection (spec: multi-provider capability system) ---
     market_data_provider: str = Field(default="auto", alias="MARKET_DATA_PROVIDER")  # "auto" | "twelve_data" | "yahoo_finance"
