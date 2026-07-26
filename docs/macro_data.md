@@ -1,153 +1,194 @@
-# Macro / industry-wide series (Tahap 3.4 branch)
+# Macro / industry-wide series
 
-Status: two adapters implemented and verified against real data --
-`YahooFinanceMacroAdapter` (FX/global-yield/index/commodity, research-only)
-and `BPSMacroAdapter` (real Indonesia national inflation, documented-free
-with a registered API key). Covers 5 real series. Real BI-Rate is still
-not covered -- see "What was actually investigated" below for exactly
-why, not a vague "not done yet."
+Status: **6 real adapters**, 13 series, verified against real data and
+persisted for real (2026-07-26): `YahooFinanceMacroAdapter` (FX/global-
+yield/index/commodity, research-only), `BPSMacroAdapter` (Indonesia
+national inflation), `BankIndonesiaRateHTMLAdapter` (real BI-Rate, HTML-
+scraped), `BankIndonesiaJISDORAdapter` (real USD/IDR JISDOR reference
+rate), `BankIndonesiaSEKIInterestRateAdapter` (real Deposit/Lending
+Facility rates, parsed from a real legacy-Excel download), `WorldBankMacroAdapter`
+(GDP growth, unemployment -- research/cross-check), `FREDMacroAdapter`
+(US Fed Funds, dollar index -- code-complete, not yet live-verified, no
+API key registered).
 
-## What was actually investigated (2026-07-25)
+**Real BI-Rate is now covered.** The earlier "HTML-only, no API, excluded"
+conclusion (see below) was correct that no JSON API exists, but wrong to
+stop there -- "no JSON API" and "blocked" are not the same thing (this
+project's own rule). Revisited with the goal of scraping the real HTML
+table instead of treating its absence as a wall.
+
+## What was actually investigated (2026-07-25, superseded below)
 
 Checked live before writing any code (spec section 2.2: never a
 fabricated/guessed source):
 
 - **BPS (Statistik Indonesia) Web API** (`webapi.bps.go.id`) -- real,
-  documented, free, and does cover inflation -- **now integrated**, using
-  a real API key the user registered and provided (`BPS_API_KEY` in
-  `.env`, `study-only` registration). See `bps.py`'s section below for
-  what it actually returns.
-- **Bank Indonesia's own site** (`bi.go.id`) -- BI-Rate (BI 7-Day Reverse
-  Repo Rate) is published there, but checked live: HTML-only, a
-  press-release table with no JSON/API/RSS endpoint. Scraping that page
-  would be exactly the kind of programmatic-access-outside-intended-use
-  case spec section 2.5-6 is cautious about -- same reasoning that
-  already excluded Stooq's JS-gated CSV download
-  (`docs/data_sources.md`). Excluded, not worked around. **Still not
-  covered by any adapter.**
-- **yfinance** -- already trusted (research_only) for OHLCV/fundamentals
-  -- also has real, live, keyless FX and index/commodity tickers.
-  Verified live: `USDIDR=X` (USD/IDR spot), `^JKSE` (IHSG), `^TNX` (US
-  10-Year Treasury yield), `CL=F` (WTI crude) all return real, current,
-  plausible values. Guessed tickers for an Indonesian government bond
-  yield and Brent crude (`ID10YT.B`, `BRENTOIL=F`) both correctly 404'd
-  -- not silently substituted with something else.
+  documented, free, and does cover inflation -- integrated using a real
+  API key the user registered and provided (`BPS_API_KEY` in `.env`).
+- **Bank Indonesia's own site** (`bi.go.id`) -- BI-Rate is published
+  there, checked live: HTML-only, no JSON/API/RSS endpoint. **At the
+  time, this was treated as a reason to exclude it entirely** -- revised
+  below once actually asked to scrape it for real.
+- **yfinance** -- real, live, keyless FX and index/commodity tickers
+  (`USDIDR=X`, `^JKSE`, `^TNX`, `CL=F`).
 
-## BPS adapter (`src/data_sources/macro/bps.py`) -- what it actually covers
+## Bank Indonesia HTML adapters (`src/data_sources/macro/bi_rate.py`, `bi_seki.py`)
 
-Real, national, monthly inflation (month-over-month), verified live:
+Real, official, server-rendered HTML/legacy-Excel data -- verified with a
+bare `curl` before writing any parser (no JavaScript execution needed;
+`robots.txt` checked and allows all three paths used).
 
-- Endpoint chain: subject catalog (`sub_id=3` = "Inflasi") -> variable
-  catalog (`var_id=1` = "Inflasi Bulanan (M-to-M)") -> data endpoint,
-  filtered to `vervar=9999` ("INDONESIA", the national aggregate row
-  inside an otherwise per-city breakdown table called "Kota Inflasi").
-- `var_id=2` ("Indeks Harga Konsumen (Umum)", the CPI index level) was
-  also checked but turned out to be a **discontinued series** -- its own
-  `th` (year) list tops out at 2019. Deliberately excluded rather than
-  serving stale data or guessing a successor variable ID.
-- **Two real bugs found and fixed, both live, both real API/response
-  constraints, not code logic errors**:
-  1. BPS caps the `th` (year range) request parameter at **3 years
-     max** -- found via a real error message
-     ("The maximum allowed number of years for the 'th' parameter is
-     3"). Fixed by chunking the requested range into <=3-year windows.
-  2. `datacontent` response keys are
-     `{vervar}{var_id}{turvar}{th_val}{turtahun_val}` concatenated with
-     **no separator** -- decoded by cross-referencing the same
-     response's own `tahun`/`turtahun` label lists (`th_val = calendar_
-     year - 1900`, confirmed against the real `th` list for 2017-2026).
-- `available_at` is a genuine per-point estimate here (not a shared
-  batch "now") -- see "Point-in-time correctness" below.
+**BI-Rate** (`bi_rate.aspx`) and **JISDOR** (`jisdor/default.aspx`):
+table columns parsed directly (Indonesian date format "22 Juli 2026",
+rate as "5.75 %" or Indonesian-formatted currency "Rp17.973,00").
+Real pagination is **ASP.NET WebForms postback** (`__doPostBack`,
+`__VIEWSTATE`/`__VIEWSTATEGENERATOR`/`__EVENTVALIDATION` hidden fields),
+not a `?page=N` query string -- found by inspecting the raw HTML before
+writing the pagination code, followed exactly as a real browser click
+would (not a bypass -- `robots.txt` already allows this path). Depth
+capped at 5 pages (a real, disclosed limit, not full history): ~4 years
+for BI-Rate's monthly-ish cadence, ~2 months for JISDOR's daily one.
+
+**SEKI table I.25** (`ekonomi-keuangan/seki`): a real legacy `.xls` file
+(verified with `file`: "Composite Document File V2 ... Creating
+Application: Microsoft Excel", not a redirect/error page), containing
+Bank Indonesia's own **Deposit Facility** and **Lending Facility**
+rates -- the real standing-facility corridor around BI-Rate, directly
+useful for `docs/valuation.md`'s discount-rate work later, not just a
+macro curiosity. A `SEKIDatasetDiscoveryAdapter` also parses the real
+~108-table SEKI catalog (section, table number, description, real `.xls`/
+`.pdf` URLs) -- discovery covers the full catalog; a value-parser exists
+for table I.25 only today, a real, disclosed scope limit.
+
+### Three real bugs found live building the BI adapters
+
+1. **Duplicate `href` attribute**: every PDF/XLS link on the SEKI catalog
+   page has `href="https://.../X.xls" href="#"` -- invalid HTML.
+   BeautifulSoup's `html.parser` resolves duplicates to the *last* one
+   ("#"), silently discarding the real URL, and re-serializing the parsed
+   tag (`str(tag)`) doesn't recover it either (the real value is already
+   gone from the parse tree). Fixed by regexing the real URLs out of the
+   *raw* response text directly and matching them positionally against
+   the row sequence, not by inspecting the parsed tag's attributes.
+2. **Missing `<tr>` wrapping**: the catalog's `<td>` cells for each table
+   row are not wrapped in their own `<tr>` at all (only the section
+   `<th>` headers are) -- `html.parser` doesn't synthesize the missing
+   rows the way a browser would. Fixed by walking `<th>`/`<td>` elements
+   in document order and chunking data cells in groups of 4 instead of
+   relying on a row element.
+3. **Year-header misalignment in the SEKI interest-rate table**: the year
+   *value* in the wide table's header row is not reliably at its block's
+   first column -- verified live: 2024's label sat at "Jan" (correct),
+   but 2025's sat at "Dec" (its block's *last* populated column) and
+   2026's at "Jun" (its most recent column so far). A naive "year label
+   marks the block start" parser produced **duplicate (year, month)
+   keys**, which crashed the real `ON CONFLICT` upsert
+   (`psycopg.errors.CardinalityViolation: ON CONFLICT DO UPDATE command
+   cannot affect row a second time`) -- caught by actually running the
+   full sync, not by code review. Fixed by anchoring year-block
+   boundaries on the month row's own "Jan" markers (verified reliable
+   across every block checked) instead of the year row's position.
+
+## World Bank / FRED (`world_bank.py`, `fred.py`) -- research/cross-check fallbacks only
+
+Both explicitly **never override** BPS/BI's faster, more current national
+series (registered after them in `cmd_macro_sync`'s provider list, and
+their series codes don't overlap). **World Bank**: real, free, keyless
+`api.worldbank.org/v2` -- verified live (GDP growth, unemployment,
+annual frequency, `null` values for not-yet-published years correctly
+excluded, never fabricated as 0). **FRED**: built strictly against its
+own documented JSON contract (each observation's `value` is a *string*;
+a not-yet-published value is the literal string `"."`, both real,
+documented FRED conventions) -- **not live-verified**, since FRED
+requires a registered key for every request and none was available.
+Registered as `unverified` in `docs/data_source_registry.md` rather than
+falsely claimed `healthy`; `cmd_macro_sync` degrades gracefully
+(`ingest_macro_series` already catches `ProviderUnavailableError` and
+prints a skip line, doesn't crash) when `FRED_API_KEY` isn't set.
 
 ## Known limitations, stated plainly
 
-- `us_10y_treasury_yield` is a **global/US** rate-environment proxy, **not
-  Indonesia's own risk-free rate or BI-Rate**. It does **not** resolve the
-  "no real discount-rate input for DCF" gap noted in `docs/valuation.md`.
-- BPS's inflation series is the **only** real Indonesia-domestic macro
-  series covered. Real BI-Rate itself is still not available from any
-  adapter (see above) -- inflation alone is not a substitute for a
-  discount-rate input.
+- `us_10y_treasury_yield`/FRED's US series are **global/US** rate-
+  environment proxies, **not Indonesia's own risk-free rate**.
+- BI-Rate/JISDOR/SEKI history depth is capped (see above) -- not full
+  history, a real and disclosed limit.
+- SEKI: only 1 of ~108 real cataloged tables has a value-parser.
+- SDDS/INDONIA pages were checked live (both `healthy` in
+  `docs/data_source_registry.md`'s audit) but have no adapter yet --
+  discovery-only for now, a real remaining gap, not silently claimed done.
 
-## Point-in-time correctness: a real bug found and fixed across BOTH adapters
+## Point-in-time correctness
 
-Building the BPS adapter's per-point `available_at` (a real formula:
-end-of-month + 10 days, erring toward BPS's real ~1-2-day publication
-lag, never earlier -- same safe-direction discipline as
-`docs/fundamentals.md`) made a pre-existing gap in the **Yahoo** adapter
-obvious by contrast: it fetches years of backfill in one call but only
-ever set one **batch-level** `available_at=now` for every point --
-meaning a 2016 USD/IDR observation was being stamped as only having
-become available *today*. Not a hypothetical: `ingest_macro_series`
-copied that single batch value onto every row. Fixed in both places:
-`SeriesPoint` now carries an optional per-point `available_at`; the Yahoo
-adapter sets a same-day-close estimate (`observation_date + 1 day`,
-appropriate for daily market data's real same-day publication); the BPS
-adapter sets its own real monthly-lag estimate; `ingest_macro_series`
-prefers the per-point value, falling back to the batch value only when a
-provider doesn't set one.
+Every adapter here sets a real, adapter-specific per-point `available_at`
+(never a shared batch "now" -- a real bug found and fixed across the
+Yahoo/BPS adapters early on, see git history): BI-Rate/JISDOR use the
+observation date's own end-of-day (BI announces same-day); SEKI/World
+Bank/FRED use a conservative fixed lag past the observation date/period-end,
+since none of these expose a real per-observation publish timestamp.
 
 ## Series and table routing
 
-Three destination-table-relevant series definitions live in
-`src/data_sources/macro/taxonomy.py`'s `SERIES_CATALOG` (the model
-docstrings draw the macro vs. industry distinction: "economy-wide
-series" vs. "market-wide series ... not tied to a single company"):
+`src/data_sources/macro/taxonomy.py`'s `SERIES_CATALOG`:
 
-| series_code | table | Provider | Real value (2026-07-24/25) |
+| series_code | table | Provider | Real value (2026-07-26) |
 |---|---|---|---|
 | `usdidr_fx` | `macro_series` | Yahoo | ~17,935 IDR/USD |
 | `us_10y_treasury_yield` | `macro_series` | Yahoo | ~4.68% |
 | `id_inflation_mom` | `macro_series` | BPS | 0.44% (June 2026) |
+| `bi_rate` | `macro_series` | Bank Indonesia (HTML) | 5.75% (July 2026) |
+| `usdidr_jisdor` | `macro_series` | Bank Indonesia (HTML) | ~17,973 IDR/USD |
+| `id_gdp_growth_annual` | `macro_series` | World Bank | 5.11% (2025) |
+| `id_unemployment_rate_annual` | `macro_series` | World Bank | 3.24% (2025) |
+| `us_fed_funds_rate` | `macro_series` | FRED | not yet live-verified (no key) |
+| `us_dollar_index_broad` | `macro_series` | FRED | not yet live-verified (no key) |
+| `bi_lending_facility_rate` | `macro_series` | Bank Indonesia (SEKI) | 6.5% (June 2026) |
+| `bi_deposit_facility_rate` | `macro_series` | Bank Indonesia (SEKI) | 4.75% (June 2026) |
 | `ihsg_composite` | `industry_series` | Yahoo | ~6,196 points |
 | `wti_crude_oil` | `industry_series` | Yahoo | ~$89.31/bbl |
 
-Both destination tables already had a real unique constraint from the
-Tahap 1 schema (`series_code`, `observation_date`, `source_id`) -- unlike
-most of this project's other tables, ingestion here is a genuine
-`ON CONFLICT` upsert, not clear-then-rewrite (verified by
-`test_ingest_macro_series_upserts_updated_value`).
+## Real run results (2026-07-26)
 
-## Real run results (2026-07-25)
+`python -m src.cli macro sync` (full history since 2016-01-01):
 
-`python -m src.cli macro sync` (full history since 2016-01-01, matching
-the OHLCV backfill window; each series routed to whichever adapter
-actually declares it in `supported_series()`):
-
-- **5/5 series succeeded**, 0 skipped.
-- Yahoo series: `usdidr_fx` (2,749 points), `us_10y_treasury_yield`
-  (2,653 points), `ihsg_composite` (2,547 points), `wti_crude_oil`
-  (2,654 points) -- all 2016-2026 daily history.
-- BPS series: `id_inflation_mom` -- **126 real monthly points,
-  2016-01-31 to 2026-06-30** (fetched across 4 chunked <=3-year API
-  calls), each with a real per-point `available_at` (e.g. April 2026's
-  observation -> available_at 2026-05-11).
+- **11/13 series succeeded, 11,041 total points**; 2 skipped
+  (`us_fed_funds_rate`, `us_dollar_index_broad` -- no `FRED_API_KEY`
+  configured, a graceful, disclosed skip, not a crash).
+- BI-Rate: 50 real decisions, 2022-07-21 to 2026-07-22 (5 pages).
+- JISDOR: 14 real daily rates (5 pages, ~2 months given daily frequency).
+- World Bank: 10 points each for GDP growth and unemployment (2016-2025).
+- SEKI: **114 points each** for Lending Facility and Deposit Facility,
+  2017-2026 -- spot-checked for economic plausibility: Lending Facility
+  is always above Deposit Facility on the same date (the real BI standing-
+  facility corridor), verified programmatically in
+  `test_bi_seki_adapter_live.py`, not just eyeballed.
+- BPS: 126 points, re-verified after `docs/data_source_registry.md`'s
+  audit found the earlier claim of this had gone stale (see that doc for
+  the full account) -- confirmed reproducible, not a code bug.
 
 ## Why this matters beyond "one more data source"
 
-`ihsg_composite` unblocked a real, previously-deferred gap:
-`docs/technical_features.md` had listed "market-relative features (beta,
-alpha, relative strength vs. IHSG)" as deferred for lack of an index
-series. **That feature is now built** -- see
-`docs/technical_features.md`'s market-relative section for the real run
-results and two more real bugs (calendar-alignment ones, in test
-fixtures) found building it.
+`ihsg_composite` unblocked `docs/technical_features.md`'s market-relative
+features (beta/alpha/relative strength vs. IHSG). The new BI-Rate/SEKI
+series are a real, disclosed step toward `docs/valuation.md`'s still-open
+"no real Indonesia discount-rate input for DCF" gap -- not yet wired into
+valuation, but the raw data no longer needs to be sourced from scratch.
 
 ## CLI
 
 ```
-python -m src.cli macro sync                          # all 5 known series, full history, routed per-adapter
-python -m src.cli macro sync --series ihsg_composite   # one series only
-python -m src.cli macro sync --series id_inflation_mom # BPS only
+python -m src.cli macro sync                            # all known series, full history, routed per-adapter
+python -m src.cli macro sync --series bi_rate            # BI-Rate only
+python -m src.cli macro sync --series usdidr_jisdor      # JISDOR only
+python -m src.cli macro sync --series bi_lending_facility_rate,bi_deposit_facility_rate  # SEKI only
 ```
 
 ## What's not built yet
 
-- **Real BI-Rate** -- Bank Indonesia's own site is HTML-only, no API
-  found live; not covered by any adapter (see above).
-- **A second macro provider** (redundancy) -- not started.
+- **SDDS/INDONIA value-parsers** -- pages checked live and `healthy`, no
+  adapter yet.
+- **Full SEKI breadth** -- 1 of ~108 real cataloged tables covered.
+- **FRED live verification** -- code-complete, needs a registered
+  `FRED_API_KEY` (free) to actually confirm against a real response.
 - **Feeding macro series into valuation (DCF) or the recommendation
-  engine** -- `us_10y_treasury_yield` is deliberately NOT used as a
-  BI-Rate substitute (see limitation above); `id_inflation_mom` alone
-  isn't a discount-rate input either. A real Indonesia-domestic rate
-  would still be needed first.
+  engine** -- the real BI-Rate/SEKI data needed for a real Indonesia
+  discount rate now exists, but isn't wired into `docs/valuation.md` yet.

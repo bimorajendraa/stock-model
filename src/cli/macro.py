@@ -7,8 +7,12 @@ from sqlalchemy.orm import Session
 
 from src.cli.market import _finish_pipeline_run, _start_pipeline_run
 from src.config.settings import Settings
+from src.data_sources.macro.bi_rate import BankIndonesiaJISDORAdapter, BankIndonesiaRateHTMLAdapter
+from src.data_sources.macro.bi_seki import BankIndonesiaSEKIInterestRateAdapter
 from src.data_sources.macro.bps import BPSMacroAdapter
+from src.data_sources.macro.fred import FREDMacroAdapter
 from src.data_sources.macro.taxonomy import SERIES_CATALOG
+from src.data_sources.macro.world_bank import WorldBankMacroAdapter
 from src.data_sources.macro.yahoo_finance import YahooFinanceMacroAdapter
 from src.ingestion.macro import ingest_macro_series
 
@@ -27,7 +31,15 @@ def cmd_macro_sync(session: Session, settings: Settings, series: list[str] | Non
     # Each series is served by exactly one adapter -- route by whichever
     # adapter actually declares it in supported_series(), rather than a
     # separate hardcoded mapping that could drift out of sync.
-    providers = [YahooFinanceMacroAdapter(), BPSMacroAdapter(api_key=settings.bps_api_key)]
+    providers = [
+        YahooFinanceMacroAdapter(),
+        BPSMacroAdapter(api_key=settings.bps_api_key),
+        BankIndonesiaRateHTMLAdapter(),
+        BankIndonesiaJISDORAdapter(),
+        WorldBankMacroAdapter(),
+        FREDMacroAdapter(api_key=settings.fred_api_key),
+        BankIndonesiaSEKIInterestRateAdapter(),
+    ]
     provider_for_series = {code: p for p in providers for code in p.supported_series()}
 
     today = dt.datetime.now(dt.UTC).date()

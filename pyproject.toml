@@ -23,6 +23,8 @@ dependencies = [
     "scipy>=1.13",
     "torch>=2.4",
     "transformers>=4.44",
+    "beautifulsoup4>=4.12",
+    "xlrd>=2.0",
 ]
 
 [project.optional-dependencies]
