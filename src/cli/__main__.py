@@ -17,6 +17,7 @@ Examples:
     python -m src.cli macro sync
     python -m src.cli sector classify --offset 0 --limit 150
     python -m src.cli news sync
+    python -m src.cli news compute-sentiment
 """
 from __future__ import annotations
 
@@ -39,7 +40,7 @@ from src.cli.market import (
     cmd_market_update,
     cmd_providers_check,
 )
-from src.cli.news import cmd_news_sync
+from src.cli.news import cmd_news_compute_sentiment, cmd_news_sync
 from src.cli.recommendation import cmd_recommendation_compute
 from src.cli.sector import cmd_sector_classify, cmd_sector_compute_relative_metrics
 from src.cli.valuation import cmd_valuation_compute
@@ -138,6 +139,8 @@ def build_parser() -> argparse.ArgumentParser:
     news_sub = news.add_subparsers(dest="action", required=True)
     news_sync = news_sub.add_parser("sync", help="Sync recent articles from all real RSS feeds")
     news_sync.add_argument("--lookback-days", type=int, default=3)
+    news_sentiment = news_sub.add_parser("compute-sentiment", help="Score unscored (article, company) pairs into news_sentiment")
+    news_sentiment.add_argument("--limit", type=int, default=None)
 
     return parser
 
@@ -192,6 +195,8 @@ def main(argv: list[str] | None = None) -> int:
             return cmd_recommendation_compute(session, settings, args.offset, args.limit, tickers)
         if args.group == "news" and args.action == "sync":
             return cmd_news_sync(session, settings, args.lookback_days)
+        if args.group == "news" and args.action == "compute-sentiment":
+            return cmd_news_compute_sentiment(session, settings, args.limit)
 
     parser.error("unknown command")
     return 2

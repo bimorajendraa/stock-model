@@ -8,6 +8,8 @@ from sqlalchemy.orm import Session
 from src.cli.market import _finish_pipeline_run, _start_pipeline_run
 from src.config.settings import Settings
 from src.data_sources.news.rss import FEED_REGISTRY, RSSFeedAdapter
+from src.features.sentiment.model import MODEL_ID
+from src.features.sentiment.pipeline import compute_sentiment_for_unscored_pairs
 from src.ingestion.news import ingest_news_from_feed
 
 _DEFAULT_LOOKBACK_DAYS = 3  # RSS feeds only ever carry recent items -- no point asking for more
@@ -37,4 +39,17 @@ def cmd_news_sync(session: Session, settings: Settings, lookback_days: int = _DE
 
     _finish_pipeline_run(session, run, total_written, total_skipped, None)
     print(f"\nNews-sync summary: {len(FEED_REGISTRY)} feeds, {total_written} articles written, {total_skipped} skipped")
+    return 0
+
+
+def cmd_news_compute_sentiment(session: Session, settings: Settings, limit: int | None = None) -> int:
+    run = _start_pipeline_run(session, "news_compute_sentiment")
+    outcome = compute_sentiment_for_unscored_pairs(session, model_version=MODEL_ID, limit=limit)
+    session.commit()
+    _finish_pipeline_run(session, run, outcome.pairs_scored, outcome.pairs_skipped_already_scored, None)
+    print(
+        f"Sentiment summary: {outcome.articles_considered} entity-linked articles considered, "
+        f"{outcome.pairs_scored} (article, company) pairs scored, "
+        f"{outcome.pairs_skipped_already_scored} already scored by {MODEL_ID}"
+    )
     return 0
