@@ -1,0 +1,63 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: pyproject.toml
+      - run: pip install -e ".[dev]"
+      - run: ruff check .
+
+  unit-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: pyproject.toml
+      - run: pip install -e ".[dev]"
+      - run: pytest -v
+        # default addopts (-m "not integration") -- no database needed
+
+  integration-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: pyproject.toml
+      - run: pip install -e ".[dev]"
+
+      - name: Start database (same image/init scripts as local dev)
+        run: docker compose up -d db --wait
+
+      - name: Apply migrations
+        env:
+          DATABASE_URL: postgresql+psycopg://idx:idx@localhost:5433/idx_intelligence
+        run: alembic upgrade head
+
+      - name: Run integration tests (DB-backed, excluding real-external-network *_live.py tests)
+        env:
+          DATABASE_URL: postgresql+psycopg://idx:idx@localhost:5433/idx_intelligence
+        run: pytest -v -m integration --ignore-glob="**/*_live.py"
+        # *_live.py tests call real external providers (BPS, RSS feeds,
+        # HuggingFace model download, etc.) -- exactly the "checked live,
+        # not from memory" discipline documented across docs/*.md, but
+        # deliberately for local/manual verification, not CI: flaky
+        # external services or rate limits would make CI red for reasons
+        # unrelated to a real code regression.
