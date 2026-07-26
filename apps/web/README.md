@@ -1,7 +1,32 @@
-# Web dashboard (Tahap 6)
+# Web dashboard (spec §25)
 
-Not started yet. Per the project's phase plan, the dashboard is built once
-the API (Tahap 6) has real recommendation/valuation/forecast data to serve
--- see `docs/architecture.md` and `docs/adr/`.
+Status: real, working Next.js App Router dashboard, built once
+`docs/api.md`'s API had real recommendation/valuation/technical/
+fundamental/sentiment data to serve. See `docs/dashboard.md` for what was
+verified and how.
 
-Planned stack: Next.js/React, per the platform spec (§25).
+Three routes, each a Server Component that `fetch()`es `apps/api` at
+request time (`cache: "no-store"` -- always current, never stale):
+
+- `/` -- company list, ticker/name search, pagination.
+- `/companies/[ticker]` -- the snapshot page: recommendation, valuation,
+  technical/fundamental/sector-relative values, recent news + sentiment.
+- `/recommendations` -- the recommendation screener, filterable by label.
+
+## Local dev
+
+```bash
+cp .env.example .env.local   # API_BASE_URL, defaults to http://localhost:8000
+npm install
+npm run dev
+```
+
+Requires `apps/api` running separately (`docker compose up -d api`, or
+`uvicorn apps.api.main:app` directly) -- this app has no data of its own.
+
+## Stack
+
+Next.js 16 (App Router, Server Components) + TypeScript + Tailwind CSS.
+No client-side data-fetching library (SWR/React Query) -- every page is
+server-rendered per request directly against the read-only API, so
+there's no client-side cache to manage.

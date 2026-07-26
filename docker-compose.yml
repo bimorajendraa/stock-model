@@ -1,8 +1,9 @@
-# Tahap 1 scope: database + API only, enough to run migrations and prove
-# the deployment shape. Scheduler (Prefect), MLflow, frontend, worker, and
-# Redis are added in later phases (spec §36) once there is a pipeline and
-# dashboard to run -- adding empty services now would just be inert compose
-# entries with nothing to verify against.
+# Tahap 1 scope was database + API only, enough to run migrations and
+# prove the deployment shape. `web` (the Next.js dashboard, docs/api.md)
+# is added now that the API has real computed results to serve. Scheduler
+# (Prefect), MLflow, and worker are still deferred (spec §36) -- adding
+# them now would just be inert compose entries with nothing to verify
+# against; `web` isn't, since apps/web is a real, working app now.
 
 services:
   db:
@@ -48,6 +49,20 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+
+  web:
+    build:
+      context: ./apps/web
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    environment:
+      # Docker-network service name, not localhost -- this fetch happens
+      # server-side inside the container, resolved via compose's DNS.
+      API_BASE_URL: http://api:8000
+    ports:
+      - "3000:3000"
 
 volumes:
   idx_db_data:

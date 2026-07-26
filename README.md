@@ -9,7 +9,7 @@ dashboard. See the full spec context in `docs/`.
 **This is a research/decision-support tool, not a trading system and not a
 guarantee of profit.** See `docs/risk_and_limitations.md`.
 
-## Status: Tahap 5 in progress (valuation + recommendation)
+## Status: Tahap 6 in progress (API + dashboard); Tahap 1-5 substantially done
 
 **Tahap 1 (scaffold)** -- done: full repo structure, 32-table schema +
 Alembic migrations with mandatory source-lineage columns on every fact
@@ -191,18 +191,68 @@ AKUMULASI_BERTAHAP, 4 HINDARI, 1 LAYAK_DIBELI), 7 companies flagged
 `high_leverage`, results spot-checked for consistency with the valuation
 numbers above.
 
+**Sentiment scoring (spec section 3.6, `docs/sentiment.md`)** -- a real
+pretrained Indonesian BERT classifier (deep learning, never an LLM, per
+spec section 2.15/2.12), chosen after a finance-specific alternative was
+checked live and rejected for scoring below the random baseline on its
+own eval. Honest finding: the general-domain model under-reads terse
+financial headlines, defaulting to neutral on clearly positive/negative
+real news (28 of 29 real scored pairs). A real test-pollution bug was
+found and fixed live (an unscoped integration test call wrote fake
+sentiment onto real production articles -- caught because many different
+real headlines showed an identical score, impossible from real inference
+on different text) and the contaminated rows were deleted.
+
+**Recommendation + sentiment (`docs/recommendation.md`)** -- sentiment
+is now read into the recommendation engine, but strictly as a
+`recent_negative_sentiment` guardrail *flag*, never a label/confidence
+input -- the same "don't manufacture false confidence from an
+unreliable signal" discipline already applied to excluding the ML
+model, justified by the sentiment model's own documented neutral-bias
+finding above.
+
+**API (spec section 26, `docs/api.md`)** -- a read-only FastAPI surface
+over everything above: company list/detail, a per-ticker snapshot
+(latest technical/fundamental/sector-relative values + valuation +
+recommendation in one call), per-company news+sentiment, and a
+recommendation screener. Verified against the real database via
+`TestClient` and a real running `uvicorn` process hit with real HTTP
+requests. Real coverage stated plainly: only 50 of 947 companies have
+fundamentals/valuation/recommendation computed, so most tickers return
+real company/sector info with empty snapshot sections, not fabricated
+values.
+
+**Dashboard (spec section 25, `docs/dashboard.md`)** -- a real Next.js
+16 (App Router) dashboard consuming the API above: company list+search,
+a per-company page (recommendation/valuation/technical/fundamental/
+sector-relative/news+sentiment), and the recommendation screener.
+Verified end-to-end with both the API and dashboard actually running,
+hit with real HTTP requests against real data (not a mockup). A real bug
+was found and fixed live: a stale Docker `api` container from hours
+earlier was silently answering requests on the same port ahead of the
+freshly-started dev server, traced via `Get-NetTCPConnection` showing
+three processes bound to port 8000.
+
+**CI** -- GitHub Actions (`.github/workflows/ci.yml`): lint, unit tests,
+and integration tests against the real `docker-compose` db service +
+Alembic migrations (mirrors local dev rather than reinventing Postgres
+setup in CI YAML). Real-external-network `*_live.py` tests are excluded
+from CI by design (BPS/RSS/HuggingFace calls belong in local/manual
+verification, not a gate that goes red for reasons unrelated to a real
+regression).
+
 **Not yet implemented**: real BI-Rate (BPS inflation now covered, BI's
 own site remains HTML-only), real per-company sector-specific disclosed
-metrics (NPL/NIM/CAR etc.), sentiment scoring on top of the now-ingested
-news, a confirmed-reliable unattended daily news schedule (task
-registered, not yet verified to fire -- `docs/news.md`), company-name-alias
-entity linking, full-universe sector classification (only top-50 + 2
-stragglers so far), feature engineering beyond technical + fundamental
-ratios, models beyond the Tahap 4 baselines (no proven edge yet),
-sector-relative valuation (sector data now real, but not wired into
-`docs/valuation.md` yet), DCF, investment_style classification, a
-validated ML/sentiment signal in the recommendation engine, dashboard.
-See `docs/architecture.md` and the phase plan (Tahap 3-7) in `docs/adr/`.
+metrics (NPL/NIM/CAR etc.), a confirmed-reliable unattended daily news
+schedule (task registered with a Docker/privilege workaround, still not
+independently confirmed to fire unattended -- `docs/news.md`),
+company-name-alias entity linking, full-universe sector/fundamental/
+valuation/recommendation coverage (only the top-50-by-market-cap set so
+far), models beyond the Tahap 4 baselines (no proven edge yet),
+sector-relative valuation, DCF, investment_style classification, a
+validated ML signal in the recommendation engine, dashboard auth/charts,
+Prefect orchestration beyond the one news flow. See `docs/architecture.md`
+and the phase plan (Tahap 3-7) in `docs/adr/`.
 
 ## Prerequisites
 
