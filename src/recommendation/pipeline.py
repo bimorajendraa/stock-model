@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 from src.database.models.company import Company
 from src.database.models.fundamentals import FinancialRatio
 from src.database.models.ml import RecommendationResult, ValuationResult
+from src.database.models.news import NewsArticle, NewsSentiment
 from src.recommendation.scoring import (
     LABEL_AKUMULASI_BERTAHAP,
     LABEL_LAYAK_DIBELI,
@@ -32,6 +33,16 @@ _SUGGESTED_HORIZON = "6-12 bulan"  # documented assumption behind the self-relat
 _NET_MARGIN_NAMES = ("net_margin__annual", "net_margin__quarterly")
 _ROE_NAMES = ("roe__annual", "roe__quarterly")
 _DEBT_TO_EQUITY_NAMES = ("debt_to_equity__annual", "debt_to_equity__quarterly")
+
+# Only a guardrail *flag*, never a label/confidence override -- same
+# discipline as excluding the ML signal (module docstring): the sentiment
+# model (docs/sentiment.md) has a real, documented bias toward "netral" on
+# terse financial headlines (28/29 real pairs scored netral in the run
+# that doc records), so its *presence* here is meaningful (the model
+# rarely misreads genuinely positive news as negative) but its *absence*
+# must never be read as "no negative news" -- most real negative news gets
+# missed as netral, not caught as false-negative.
+_NEGATIVE_SENTIMENT_LABELS = {"negatif", "sangat_negatif"}
 
 
 @dataclasses.dataclass
@@ -54,6 +65,23 @@ def _latest_ratio_value(session: Session, company_id: int, ratio_names: tuple[st
         .order_by(FinancialRatio.available_at.desc())
     ).first()
     return float(row[0]) if row and row[0] is not None else None
+
+
+def _latest_sentiment(session: Session, company_id: int) -> tuple[str | None, float | None]:
+    """Most recent (by the article's own ``published_at``, not scoring
+    time) ``news_sentiment`` row linked to this company across every
+    model_version -- informational only, see the guardrail comment above
+    for why this never drives the label/confidence itself."""
+    row = session.execute(
+        select(NewsSentiment.sentiment_label, NewsSentiment.sentiment_score)
+        .join(NewsArticle, NewsArticle.id == NewsSentiment.article_id)
+        .where(NewsSentiment.company_id == company_id)
+        .order_by(NewsArticle.published_at.desc())
+    ).first()
+    if row is None:
+        return None, None
+    label, score = row
+    return label, (float(score) if score is not None else None)
 
 
 def compute_recommendation(session: Session, ticker: str, as_of_date: dt.date | None = None) -> RecommendationOutcome:
@@ -93,6 +121,8 @@ def compute_recommendation(session: Session, ticker: str, as_of_date: dt.date | 
         n_fundamental_inputs,
     )
 
+    sentiment_label, sentiment_score = _latest_sentiment(session, company.id)
+
     guardrails_triggered = []
     if valuation_position is None:
         guardrails_triggered.append("valuation_not_computable")
@@ -100,6 +130,8 @@ def compute_recommendation(session: Session, ticker: str, as_of_date: dt.date | 
         guardrails_triggered.append("fundamental_quality_not_computable")
     if debt_to_equity is not None and debt_to_equity > 2.0:
         guardrails_triggered.append("high_leverage")
+    if sentiment_label in _NEGATIVE_SENTIMENT_LABELS:
+        guardrails_triggered.append("recent_negative_sentiment")
 
     entry_zone = None
     if label in (LABEL_LAYAK_DIBELI, LABEL_AKUMULASI_BERTAHAP) and fair_value_conservative is not None and fair_value_base is not None:
@@ -118,6 +150,9 @@ def compute_recommendation(session: Session, ticker: str, as_of_date: dt.date | 
         "roe": roe,
         "debt_to_equity": debt_to_equity,
         "ml_signal_used": False,  # explicit, not an omission -- see module docstring
+        "sentiment_label": sentiment_label,
+        "sentiment_score": sentiment_score,
+        "sentiment_signal_used": sentiment_label is not None,  # False when this company has no scored news yet
     }
 
     session.execute(

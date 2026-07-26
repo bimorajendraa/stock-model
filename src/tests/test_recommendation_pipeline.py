@@ -14,6 +14,7 @@ from src.database.models.company import Company
 from src.database.models.fundamentals import FinancialRatio
 from src.database.models.mixins import QualityStatus
 from src.database.models.ml import RecommendationResult, ValuationResult
+from src.database.models.news import NewsArticle, NewsEntity, NewsSentiment
 from src.database.models.ops import DataSourceRegistry
 from src.database.session import make_engine
 from src.recommendation.pipeline import compute_recommendation
@@ -92,6 +93,74 @@ def company_with_recommendation_inputs(db_session):
     db_session.query(Company).filter(Company.id == company.id).delete()
     db_session.query(DataSourceRegistry).filter(DataSourceRegistry.name == "fake_recommendation_source").delete()
     db_session.commit()
+
+
+@pytest.fixture()
+def negative_sentiment_for_company(db_session, company_with_recommendation_inputs):
+    company = company_with_recommendation_inputs
+    source = _make_source(db_session, "fake_recommendation_source")
+    now = dt.datetime.now(dt.UTC)
+    article = NewsArticle(
+        canonical_url="https://example.invalid/rec-sentiment-1", title="Berita ZZZR2 buruk",
+        media_name="Test Media", language="id", credibility_tier=3, is_duplicate=False,
+        cross_source_confirmed=False, source_id=source.id, retrieved_at=now, available_at=now,
+        currency="IDR", unit="unit", is_restated=False, quality_status=QualityStatus.VALID, published_at=now,
+    )
+    db_session.add(article)
+    db_session.commit()
+    db_session.add(NewsEntity(article_id=article.id, company_id=company.id))
+    db_session.add(
+        NewsSentiment(
+            article_id=article.id, company_id=company.id, sentiment_label="sangat_negatif",
+            sentiment_score=-0.8, model_version="test-model",
+        )
+    )
+    db_session.commit()
+    yield company
+    db_session.query(NewsSentiment).filter(NewsSentiment.company_id == company.id).delete()
+    db_session.query(NewsEntity).filter(NewsEntity.company_id == company.id).delete()
+    db_session.query(NewsArticle).filter(NewsArticle.id == article.id).delete()
+    db_session.commit()
+
+
+def test_compute_recommendation_negative_sentiment_triggers_guardrail_but_not_label(
+    db_session, negative_sentiment_for_company
+):
+    company = negative_sentiment_for_company
+    outcome = compute_recommendation(db_session, "ZZZR2", as_of_date=dt.date(2026, 7, 24))
+    db_session.commit()
+
+    # sentiment is a guardrail flag only -- valuation+fundamentals still drive the label
+    assert outcome.label == LABEL_LAYAK_DIBELI
+
+    result = db_session.scalar(
+        select(RecommendationResult).where(
+            RecommendationResult.company_id == company.id, RecommendationResult.as_of_date == dt.date(2026, 7, 24)
+        )
+    )
+    assert result.guardrails_triggered is not None
+    assert "recent_negative_sentiment" in result.guardrails_triggered
+    assert result.scores["sentiment_label"] == "sangat_negatif"
+    assert result.scores["sentiment_score"] == pytest.approx(-0.8)
+    assert result.scores["sentiment_signal_used"] is True
+
+
+def test_compute_recommendation_no_sentiment_data_records_none_and_no_guardrail(
+    db_session, company_with_recommendation_inputs
+):
+    company = company_with_recommendation_inputs
+    compute_recommendation(db_session, "ZZZR2", as_of_date=dt.date(2026, 7, 24))
+    db_session.commit()
+
+    result = db_session.scalar(
+        select(RecommendationResult).where(
+            RecommendationResult.company_id == company.id, RecommendationResult.as_of_date == dt.date(2026, 7, 24)
+        )
+    )
+    assert result.scores["sentiment_label"] is None
+    assert result.scores["sentiment_score"] is None
+    assert result.scores["sentiment_signal_used"] is False
+    assert "recent_negative_sentiment" not in (result.guardrails_triggered or [])
 
 
 def test_compute_recommendation_undervalued_healthy_is_layak_dibeli(db_session, company_with_recommendation_inputs):

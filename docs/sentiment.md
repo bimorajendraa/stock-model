@@ -135,7 +135,12 @@ manually for now.
   the one candidate checked was rejected (see above); the general-domain
   model used instead visibly under-reads terse financial headlines (see
   above).
-- **Sentiment feeding into the recommendation engine** -- `news_sentiment`
-  is populated but `src/recommendation/` does not yet consume it.
+- **Sentiment feeding into the recommendation engine, beyond a guardrail
+  flag** -- `src/recommendation/pipeline.py` now reads the company's most
+  recent `news_sentiment` row and adds a `recent_negative_sentiment`
+  guardrail when it's negative, but deliberately never lets it change the
+  label or confidence -- see `docs/recommendation.md`'s "Sentiment: a
+  guardrail flag only" section for why, given this doc's own finding that
+  the model under-reads negative financial news as neutral.
 - **Scoring articles with no entity link** -- structural schema
   limitation, see above.
