@@ -52,6 +52,8 @@ class NewsEntity(Base, TimestampMixin):
     article_id: Mapped[int] = mapped_column(ForeignKey("news_articles.id"), nullable=False, index=True)
     company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"), nullable=False, index=True)
     relevance_score: Mapped[float | None] = mapped_column(Numeric(5, 4), nullable=True)
+    match_method: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    matched_text: Mapped[str | None] = mapped_column(String(256), nullable=True)
 
 
 class NewsSentiment(Base, TimestampMixin):

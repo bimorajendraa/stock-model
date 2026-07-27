@@ -5,6 +5,8 @@ wrote -- this layer computes nothing.
 """
 from __future__ import annotations
 
+from typing import Literal
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -52,12 +54,18 @@ def _latest_named_values(rows: list[tuple[str, float | None]]) -> list[NamedValu
 @router.get("", response_model=CompanyListResponse)
 def list_companies(
     q: str | None = Query(default=None, description="Filter by ticker or company name substring"),
+    asset_type: Literal["equity", "index", "etf", "other", "all"] = Query(
+        default="equity", description="Asset class; defaults to listed equities only"
+    ),
     offset: int = Query(default=0, ge=0),
     limit: int = Query(default=50, ge=1, le=200),
     session: Session = Depends(get_session),
 ) -> CompanyListResponse:
     stmt = select(Company).outerjoin(SectorRegistry, Company.sector_registry_id == SectorRegistry.id)
     count_stmt = select(func.count()).select_from(Company)
+    if asset_type != "all":
+        stmt = stmt.where(Company.asset_type == asset_type)
+        count_stmt = count_stmt.where(Company.asset_type == asset_type)
     if q:
         pattern = f"%{q}%"
         text_filter = (Company.ticker.ilike(pattern)) | (Company.company_name.ilike(pattern))
@@ -73,6 +81,7 @@ def list_companies(
         CompanyListItem(
             ticker=company.ticker,
             company_name=company.company_name,
+            asset_type=company.asset_type,
             sector_name=sector_name,
             listing_board=company.listing_board,
             status=company.status,
@@ -89,6 +98,7 @@ def get_company(ticker: str, session: Session = Depends(get_session)) -> Company
     return CompanyDetail(
         ticker=company.ticker,
         company_name=company.company_name,
+        asset_type=company.asset_type,
         sector_name=sector.sector_name if sector else None,
         subsector_name=sector.subsector_name if sector else None,
         listing_board=company.listing_board,

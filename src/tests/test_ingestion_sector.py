@@ -11,6 +11,7 @@ other rows scoped by company_id. Any ``SectorRegistry`` row created here
 is real, legitimate, reusable classification data other companies would
 also reference -- not a fixture needing cleanup.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -32,6 +33,7 @@ def db_session():
         session.rollback()
 
 
+@pytest.mark.live
 def test_fetch_and_store_sector_real_ticker(db_session):
     company = db_session.scalar(select(Company).where(Company.ticker == "BBCA"))
     if company is None:
@@ -55,6 +57,7 @@ def test_fetch_and_store_sector_real_ticker(db_session):
     db_session.commit()
 
 
+@pytest.mark.live
 def test_fetch_and_store_sector_is_idempotent_no_duplicate_sector_rows(db_session):
     company = db_session.scalar(select(Company).where(Company.ticker == "BBCA"))
     if company is None:
@@ -70,7 +73,9 @@ def test_fetch_and_store_sector_is_idempotent_no_duplicate_sector_rows(db_sessio
 
     assert company.sector_registry_id == first_sector_id  # same row reused, not a new duplicate
     expected_code = _sector_code(first_outcome.sector, first_outcome.industry)
-    matching = db_session.scalars(select(SectorRegistry).where(SectorRegistry.sector_code == expected_code)).all()
+    matching = db_session.scalars(
+        select(SectorRegistry).where(SectorRegistry.sector_code == expected_code)
+    ).all()
     # exactly one row for this (sector, industry) pair, regardless of how many times fetched
     assert len(matching) == 1
     assert matching[0].id == first_sector_id
@@ -90,7 +95,9 @@ def test_two_industries_in_the_same_broad_sector_get_distinct_rows(db_session):
 
     marker = "zzztest"  # keeps these rows identifiable for cleanup, distinct from any real sector name
     try:
-        row_a = _get_or_create_sector(db_session, f"{marker} Financial Services", f"{marker} Banks - Regional")
+        row_a = _get_or_create_sector(
+            db_session, f"{marker} Financial Services", f"{marker} Banks - Regional"
+        )
         row_b = _get_or_create_sector(
             db_session, f"{marker} Financial Services", f"{marker} Insurance - Property & Casualty"
         )
@@ -100,7 +107,9 @@ def test_two_industries_in_the_same_broad_sector_get_distinct_rows(db_session):
         assert row_a.sector_name == row_b.sector_name == f"{marker} Financial Services"
         assert row_a.sector_code != row_b.sector_code
     finally:
-        db_session.query(SectorRegistry).filter(SectorRegistry.sector_name == f"{marker} Financial Services").delete()
+        db_session.query(SectorRegistry).filter(
+            SectorRegistry.sector_name == f"{marker} Financial Services"
+        ).delete()
         db_session.commit()
 
 

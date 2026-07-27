@@ -24,15 +24,28 @@ rows rather than replacing anything.
 from __future__ import annotations
 
 import dataclasses
+import re
 from collections.abc import Callable
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from src.database.models.company import Company
 from src.database.models.news import NewsArticle, NewsEntity, NewsSentiment
-from src.features.sentiment.model import SentimentModelResult, derive_score_and_label, score_text
+from src.features.sentiment.finance_rules import classify_financial_event
+from src.features.sentiment.model import SentimentModelResult, derive_score_and_label, score_financial_text
 
 ScorerFn = Callable[[str], SentimentModelResult]
+
+
+def _company_context(text: str, ticker: str, company_name: str, matched_text: str | None) -> str:
+    """Prefer sentences about this company; fall back to the whole article snippet."""
+    needles = [ticker.casefold(), company_name.casefold()]
+    if matched_text:
+        needles.append(matched_text.casefold())
+    sentences = [part.strip() for part in re.split(r"(?<=[.!?])\s+", text) if part.strip()]
+    matched = [sentence for sentence in sentences if any(needle in sentence.casefold() for needle in needles)]
+    return " ".join(matched) if matched else text
 
 
 @dataclasses.dataclass
@@ -45,7 +58,7 @@ class SentimentPipelineOutcome:
 def compute_sentiment_for_unscored_pairs(
     session: Session,
     model_version: str,
-    scorer: ScorerFn = score_text,
+    scorer: ScorerFn = score_financial_text,
     limit: int | None = None,
     company_ids: list[int] | None = None,
 ) -> SentimentPipelineOutcome:
@@ -59,8 +72,18 @@ def compute_sentiment_for_unscored_pairs(
     already_scored = set(session.execute(already_scored_query).all())
 
     query = (
-        select(NewsArticle.id, NewsArticle.title, NewsArticle.summary, NewsEntity.company_id)
+        select(
+            NewsArticle.id,
+            NewsArticle.title,
+            NewsArticle.summary,
+            NewsArticle.content_snippet,
+            NewsEntity.company_id,
+            NewsEntity.matched_text,
+            Company.ticker,
+            Company.company_name,
+        )
         .join(NewsEntity, NewsEntity.article_id == NewsArticle.id)
+        .join(Company, Company.id == NewsEntity.company_id)
         .order_by(NewsArticle.id)
     )
     if company_ids is not None:
@@ -69,7 +92,7 @@ def compute_sentiment_for_unscored_pairs(
 
     seen_articles: set[int] = set()
     to_insert: list[NewsSentiment] = []
-    for article_id, title, summary, company_id in rows:
+    for article_id, title, summary, content_snippet, company_id, matched_text, ticker, company_name in rows:
         seen_articles.add(article_id)
         if (article_id, company_id) in already_scored:
             outcome.pairs_skipped_already_scored += 1
@@ -77,15 +100,20 @@ def compute_sentiment_for_unscored_pairs(
         if limit is not None and outcome.pairs_scored >= limit:
             continue
 
-        text = f"{title} {summary or ''}".strip()
-        result = scorer(text)
+        text = f"{title}. {summary or ''} {content_snippet or ''}".strip()
+        context = _company_context(text, ticker, company_name, matched_text)
+        result = scorer(context)
         score, label = derive_score_and_label(result)
+        event = classify_financial_event(context)
         to_insert.append(
             NewsSentiment(
                 article_id=article_id,
                 company_id=company_id,
                 sentiment_label=label,
                 sentiment_score=score,
+                event_category=event.category,
+                severity=event.severity,
+                impact_horizon=event.impact_horizon,
                 model_version=model_version,
             )
         )

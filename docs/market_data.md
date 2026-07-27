@@ -76,7 +76,7 @@ outstanding()` fetches and stores it on `companies.shares_outstanding`
 computes `market_cap = shares_outstanding * this project's own latest
 stored close` (not Yahoo's own marketCap figure) as a pure DB read.
 
-Real run (2026-07-25): 926 of 947 companies got real shares_outstanding
+Real run (2026-07-25): 926 of 942 equities got real shares_outstanding
 (21 failed -- mostly the same class of non-equity/delisted-adjacent
 tickers seen elsewhere). Real top 5 by market cap: BBCA, BREN, DCII, BBRI,
 BMRI -- all recognizable large caps, a good sanity check that the ranking
@@ -145,9 +145,9 @@ unmodeled holiday without misreporting it as a data failure.
   than overloading `OFFICIAL` or `FALLBACK_PROVIDER`.
 
 Run for real against the full universe on 2026-07-25: **1,706,497 rows
-written across 944 companies, exactly matching the raw row count 1:1**
-(3 companies skipped -- the same 3 non-equity tickers with no raw data
-to begin with). **226 bars flagged as outliers** (~0.01% of rows) --
+written across all 942 equities plus 2 indices, exactly matching the raw
+row count 1:1** (3 other indices had no raw data to begin with). **226 bars
+flagged as outliers** (~0.01% of rows) --
 kept in the data, not removed, for later review.
 
 ## CLI

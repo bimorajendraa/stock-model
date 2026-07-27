@@ -1,9 +1,8 @@
 # Tahap 1 scope was database + API only, enough to run migrations and
 # prove the deployment shape. `web` (the Next.js dashboard, docs/api.md)
-# is added now that the API has real computed results to serve. Scheduler
-# (Prefect), MLflow, and worker are still deferred (spec §36) -- adding
-# them now would just be inert compose entries with nothing to verify
-# against; `web` isn't, since apps/web is a real, working app now.
+# is added now that the API has real computed results to serve. The daily news
+# scheduler is now a small DB-backed supervised service. Broader Prefect
+# orchestration, MLflow, and a generic worker remain deferred (spec §36).
 
 services:
   db:
@@ -63,6 +62,29 @@ services:
       API_BASE_URL: http://api:8000
     ports:
       - "3000:3000"
+
+  news-scheduler:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    command: ["python", "-m", "src.orchestration.news_scheduler"]
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-idx}:${POSTGRES_PASSWORD:-idx}@db:5432/${POSTGRES_DB:-idx_intelligence}
+      APP_ENV: ${APP_ENV:-development}
+      APP_TIMEZONE: ${APP_TIMEZONE:-Asia/Jakarta}
+      NEWS_USAGE_MODE: ${NEWS_USAGE_MODE:-research}
+      NEWS_SCHEDULE_HOUR: ${NEWS_SCHEDULE_HOUR:-6}
+      NEWS_SCHEDULE_MINUTE: ${NEWS_SCHEDULE_MINUTE:-0}
+    healthcheck:
+      test: ["CMD", "python", "-m", "src.orchestration.news_scheduler", "--healthcheck"]
+      interval: 5m
+      timeout: 15s
+      retries: 3
+      start_period: 3m
 
 volumes:
   idx_db_data:

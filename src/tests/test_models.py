@@ -39,6 +39,7 @@ REQUIRED_TABLES = {
     "data_quality_results",
     "data_source_registry",
     "pipeline_runs",
+    "pipeline_company_results",
     "alerts",
 }
 
@@ -93,3 +94,14 @@ def test_source_id_fk_points_at_data_source_registry():
     table = Base.metadata.tables["market_prices_raw"]
     fk_targets = {fk.target_fullname for fk in table.columns["source_id"].foreign_keys}
     assert "data_source_registry.id" in fk_targets
+
+
+def test_companies_have_asset_type_discriminator():
+    table = Base.metadata.tables["companies"]
+    assert "asset_type" in table.columns
+    assert table.columns["asset_type"].nullable is False
+
+
+def test_news_entities_record_how_the_company_was_matched():
+    table = Base.metadata.tables["news_entities"]
+    assert {"match_method", "matched_text"}.issubset(table.columns.keys())

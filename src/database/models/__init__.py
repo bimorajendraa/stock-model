@@ -15,7 +15,7 @@ from src.database.models import (  # noqa: F401
     ops,
     sector,
 )
-from src.database.models.company import Company, CompanyAlias, SectorRegistry
+from src.database.models.company import AssetType, Company, CompanyAlias, SectorRegistry
 from src.database.models.features import FundamentalFeature, ModelFeatures, TechnicalFeature
 from src.database.models.fundamentals import (
     FinancialRatio,
@@ -45,12 +45,14 @@ from src.database.models.ops import (
     DataQualityResult,
     DataSourceCapability,
     DataSourceRegistry,
+    PipelineCompanyResult,
     PipelineRun,
 )
 from src.database.models.sector import SectorSpecificMetric
 
 __all__ = [
     "Alert",
+    "AssetType",
     "Company",
     "CompanyAlias",
     "CompanyProviderSymbol",
@@ -74,6 +76,7 @@ __all__ = [
     "NewsArticle",
     "NewsEntity",
     "NewsSentiment",
+    "PipelineCompanyResult",
     "PipelineRun",
     "Prediction",
     "RecommendationResult",

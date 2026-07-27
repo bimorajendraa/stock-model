@@ -2,13 +2,14 @@
 a live database. Uses synthetic-but-deterministic price series (not
 fixtures pretending to be real market data -- these are clearly
 constructed patterns purely to exercise the pipeline's plumbing)."""
+
 from __future__ import annotations
 
 import datetime as dt
 
 import numpy as np
 import pytest
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from src.database.models.company import Company
@@ -25,6 +26,17 @@ pytestmark = pytest.mark.integration
 TEST_TICKERS = ["ZZZB1", "ZZZB2"]
 
 
+def _delete_stale_fixture_rows(session: Session) -> None:
+    """Make reruns safe even if a previous pytest process was killed."""
+    company_ids = list(session.scalars(select(Company.id).where(Company.ticker.in_(TEST_TICKERS))))
+    if company_ids:
+        session.execute(delete(TechnicalFeature).where(TechnicalFeature.company_id.in_(company_ids)))
+        session.execute(delete(MarketPriceClean).where(MarketPriceClean.company_id.in_(company_ids)))
+        session.execute(delete(Company).where(Company.id.in_(company_ids)))
+    session.execute(delete(DataSourceRegistry).where(DataSourceRegistry.name == "fake_baseline_source"))
+    session.commit()
+
+
 @pytest.fixture()
 def db_session():
     engine = make_engine("postgresql+psycopg://idx:idx@localhost:5433/idx_intelligence")
@@ -35,9 +47,14 @@ def db_session():
 
 @pytest.fixture()
 def companies_with_features(db_session):
-    source = db_session.scalar(select(DataSourceRegistry).where(DataSourceRegistry.name == "fake_baseline_source"))
+    _delete_stale_fixture_rows(db_session)
+    source = db_session.scalar(
+        select(DataSourceRegistry).where(DataSourceRegistry.name == "fake_baseline_source")
+    )
     if source is None:
-        source = DataSourceRegistry(name="fake_baseline_source", category="market", access_type="internal_derived", is_active=True)
+        source = DataSourceRegistry(
+            name="fake_baseline_source", category="market", access_type="internal_derived", is_active=True
+        )
         db_session.add(source)
         db_session.flush()
 
@@ -83,12 +100,7 @@ def companies_with_features(db_session):
 
     yield companies
 
-    for company in companies:
-        db_session.query(TechnicalFeature).filter(TechnicalFeature.company_id == company.id).delete()
-        db_session.query(MarketPriceClean).filter(MarketPriceClean.company_id == company.id).delete()
-        db_session.query(Company).filter(Company.id == company.id).delete()
-    db_session.query(DataSourceRegistry).filter(DataSourceRegistry.name == "fake_baseline_source").delete()
-    db_session.commit()
+    _delete_stale_fixture_rows(db_session)
 
 
 def test_run_baseline_comparison_produces_results_for_all_models(db_session, companies_with_features):
@@ -100,7 +112,13 @@ def test_run_baseline_comparison_produces_results_for_all_models(db_session, com
     assert info["n_test"] > 0
 
     model_names = {r.model_name for r in results}
-    assert model_names == {"naive_base_rate", "moving_average_rule", "logistic_regression", "random_forest", "simple_mlp"}
+    assert model_names == {
+        "naive_base_rate",
+        "moving_average_rule",
+        "logistic_regression",
+        "random_forest",
+        "simple_mlp",
+    }
 
     for r in results:
         assert 0 <= r.validation.precision <= 1

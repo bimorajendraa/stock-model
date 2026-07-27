@@ -2,24 +2,9 @@
 DB/network (spec section 8/10, section 2.15: valuation must be
 deterministic code, never LLM-computed).
 
-Why self-relative (a company's own historical P/E/P/B range), not
-peer/sector-relative or DCF, for this first cut:
-
-- **Peer/sector comparison** needs `sector_registry`/
-  `companies.sector_registry_id` populated -- not yet (see
-  `docs/data_sources.md`'s company-master-data limitation: no verified
-  free IDX sector-classification source). Comparing a bank's P/E to a
-  miner's would be worse than not comparing at all.
-- **DCF** needs a discount rate, which needs a real risk-free-rate proxy
-  (BI-Rate or similar) -- no macro adapter exists yet (see
-  `docs/model_methodology.md`'s "what's not built yet"). Guessing a
-  discount rate would be exactly the kind of fabricated assumption spec
-  section 2.12 forbids; a valuation is extremely sensitive to that one
-  number.
-- **Self-relative** needs no external assumption at all: every input
-  (the historical P/E/P/B series, the latest EPS/book-value-per-share) is
-  a real, already-computed, point-in-time value already sitting in
-  `financial_ratios`/`financial_statement_items`.
+This module deliberately contains only the own-history method. Same-sector
+peer valuation and explicit-assumption DCF live in `peer.py` and `dcf.py` and
+are combined by `pipeline.py`.
 
 **Known limitation, stated plainly**: this is "is this cheap or expensive
 relative to its OWN past," not "intrinsic value" in the DCF sense --
@@ -75,10 +60,16 @@ def combine_methods(estimates: dict[str, dict[str, float | None]]) -> dict:
         return {"bear": None, "base": None, "bull": None, "conservative": None, "methods_used": {}}
 
     weight = 1.0 / len(usable)
+
+    def average_scenario(name: str) -> float | None:
+        values = [float(value[name]) for value in usable.values() if value.get(name) is not None]
+        return sum(values) / len(values) if values else None
+
+    bear_values = [float(value["bear"]) for value in usable.values() if value.get("bear") is not None]
     return {
-        "bear": sum(v["bear"] for v in usable.values()) * weight,
-        "base": sum(v["base"] for v in usable.values()) * weight,
-        "bull": sum(v["bull"] for v in usable.values()) * weight,
-        "conservative": min(v["bear"] for v in usable.values()),
+        "bear": average_scenario("bear"),
+        "base": average_scenario("base"),
+        "bull": average_scenario("bull"),
+        "conservative": min(bear_values) if bear_values else None,
         "methods_used": {name: weight for name in usable},
     }

@@ -26,6 +26,7 @@ import dataclasses
 from functools import lru_cache
 
 MODEL_ID = "ayameRushia/bert-base-indonesian-1.5G-sentiment-analysis-smsa"
+FINANCE_MODEL_VERSION = "smsa-ayamerushia-bert-id-1.5g+finance-rules-v1"
 
 # Not from the model itself (it only ever emits Positive/Neutral/Negative) --
 # our own disclosed heuristic for splitting each polarity into a "sangat_"
@@ -59,6 +60,13 @@ def score_text(text: str) -> SentimentModelResult:
     probabilities = {item["label"]: float(item["score"]) for item in predictions}
     raw_label = max(probabilities, key=probabilities.get)
     return SentimentModelResult(model_id=MODEL_ID, raw_label=raw_label, probabilities=probabilities)
+
+
+def score_financial_text(text: str) -> SentimentModelResult:
+    """General Indonesian BERT plus transparent high-precision finance rules."""
+    from src.features.sentiment.finance_rules import calibrate_financial_sentiment
+
+    return calibrate_financial_sentiment(text, score_text(text))
 
 
 def derive_score_and_label(result: SentimentModelResult) -> tuple[float, str]:

@@ -161,6 +161,6 @@ python -m src.cli recommendation compute --offset 0 --limit 150
   above) -- not weighted into `confidence`, not a positive-sentiment
   guardrail (only negative triggers one), and macro signals still aren't
   incorporated at all.
-- **A dashboard surfacing this** -- `docs/api.md`'s
-  `/companies/{ticker}/snapshot` now serves it over HTTP; the actual
-  `apps/web` UI is still not started.
+- **Richer dashboard visualization** -- the real `apps/web` UI now surfaces
+  recommendations through the snapshot and screener APIs, but charts and
+  more interactive exploration remain unbuilt (`docs/dashboard.md`).

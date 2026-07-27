@@ -63,7 +63,9 @@ class OHLCVBar:
 
 class CompanyRecord:
     """Minimal company identity as returned by a market-data vendor's bulk
-    ticker listing. Deliberately thin: sector/subsector/listing_date/
+    ticker listing. ``asset_type`` is optional because not every provider
+    exposes it; company sync infers obvious index/ETF names when absent.
+    Deliberately otherwise thin: sector/subsector/listing_date/
     listing_board/free_float (spec §3.1) are NOT included here because
     neither adapter implemented so far returns them in a bulk-friendly way
     (Sectors.app's screener only returns symbol+company_name per row;
@@ -72,11 +74,12 @@ class CompanyRecord:
     another official registry -- once one is available; do not backfill
     them here with guesses."""
 
-    __slots__ = ("company_name", "ticker")
+    __slots__ = ("asset_type", "company_name", "ticker")
 
-    def __init__(self, ticker: str, company_name: str) -> None:
+    def __init__(self, ticker: str, company_name: str, asset_type: str | None = None) -> None:
         self.ticker = ticker
         self.company_name = company_name
+        self.asset_type = asset_type
 
 
 class MarketDataProvider(ABC):

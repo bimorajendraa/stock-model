@@ -16,10 +16,9 @@ code** (spec section 2.2: never a fabricated/guessed source):
 | Investor Daily (`investor.id/rss`) | HTTP 404 -- guessed URL wrong, real endpoint not found live, excluded rather than guessed further |
 | IDX's own site (`idx.co.id/.../berita/rss`) | HTTP 403 -- same Cloudflare block already documented in `docs/data_sources.md` for IDX's OHLCV endpoints |
 
-Four real, working, current feeds -- `FEED_REGISTRY` below -- meets spec
-section 3.6's ">=5 distinct domains" target loosely (4 news domains; a
-5th, official-disclosure-tier source would need IDX's own feed, which is
-blocked, see above).
+Five feeds are registered below. CNA Indonesia is explicitly restricted to
+personal/non-commercial research use and excluded by the ingestion layer in
+production mode, leaving four production-safe domains.
 
 **credibility_tier is an editorial judgment call**, not a fabricated or
 authoritative rating (spec section 3.6's own tier scale, 1=regulator/
@@ -28,17 +27,11 @@ and CNBC Indonesia (major established financial outlet) are tier 2;
 Detik Finance and Katadata are tier 3. Documented here so it can be
 revisited, not presented as more rigorous than it is.
 
-**Known limitation, stated plainly**: RSS feeds are not searchable by
-ticker -- there is no server-side "articles about BBCA" endpoint.
-``search()`` (required by the ``NewsProvider`` interface) fetches the
-whole feed and does a best-effort ticker-code substring match in
-title+description, which will miss articles that only use a company's
-*name* ("Bank Central Asia") rather than its ticker code ("BBCA"). No
-company-name-alias dictionary is built yet. ``fetch_recent()`` (not part
-of the interface) returns the whole feed unfiltered, for the more
-realistic "ingest everything, link entities afterward" workflow the
-ingestion layer actually uses (it has real company-name data to match
-against; the adapter layer deliberately does not touch the database).
+**Known limitation, stated plainly**: RSS feeds are not searchable archives.
+``search()`` can only filter the current feed by ticker. The production
+workflow uses ``fetch_recent()`` and links provider/current/previous tickers
+plus current/previous company names afterward in the database-aware ingestion
+layer; see `docs/news.md`.
 
 **Real false-positive found and fixed while testing entity-linking
 against the full real company universe (2026-07-25)**: several real IDX
@@ -83,6 +76,8 @@ class FeedConfig:
     feed_url: str
     media_name: str
     credibility_tier: int
+    access_type: AccessType = AccessType.DOCUMENTED_FREE
+    usage_restriction: str | None = None
 
 
 FEED_REGISTRY: list[FeedConfig] = [
@@ -90,6 +85,15 @@ FEED_REGISTRY: list[FeedConfig] = [
     FeedConfig("cnbc_indonesia_market_rss", "cnbcindonesia.com", "https://www.cnbcindonesia.com/market/rss", "CNBC Indonesia", 2),
     FeedConfig("detik_finance_rss", "detik.com", "https://finance.detik.com/rss", "Detik Finance", 3),
     FeedConfig("katadata_rss", "katadata.co.id", "https://katadata.co.id/rss", "Katadata", 3),
+    FeedConfig(
+        "cna_indonesia_business_rss",
+        "cna.id",
+        "https://www.cna.id/api/v1/rss-outbound-feed?_format=xml&category=3321",
+        "CNA Indonesia",
+        2,
+        access_type=AccessType.FALLBACK_PROVIDER,
+        usage_restriction="personal_noncommercial_research_only",
+    ),
 ]
 
 _TICKER_PATTERN_CACHE: dict[str, re.Pattern] = {}
@@ -123,7 +127,11 @@ class RSSFeedAdapter(NewsProvider):
     def __init__(self, config: FeedConfig, client: httpx.Client | None = None) -> None:
         self._config = config
         self._client = client or httpx.Client(timeout=20.0, headers={"User-Agent": "Mozilla/5.0"}, follow_redirects=True)
-        self._source = SourceDescriptor(name=config.provider_name, url=config.feed_url, access_type=AccessType.DOCUMENTED_FREE)
+        self._source = SourceDescriptor(
+            name=config.provider_name,
+            url=config.feed_url,
+            access_type=config.access_type,
+        )
 
     @property
     def provider_name(self) -> str:
@@ -132,6 +140,10 @@ class RSSFeedAdapter(NewsProvider):
     @property
     def source_domain(self) -> str:
         return self._config.source_domain
+
+    @property
+    def usage_restriction(self) -> str | None:
+        return self._config.usage_restriction
 
     def _fetch_items(self) -> list[RawNewsArticle]:
         try:

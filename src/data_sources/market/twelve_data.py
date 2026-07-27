@@ -84,7 +84,11 @@ class TwelveDataMarketProvider(MarketDataProvider):
         payload = self._get("/stocks", {"exchange": "IDX"})
         rows = payload.get("data", [])
         companies = [
-            CompanyRecord(ticker=row["symbol"], company_name=row["name"])
+            CompanyRecord(
+                ticker=row["symbol"],
+                company_name=row["name"],
+                asset_type=row.get("type"),
+            )
             for row in rows
             if row.get("symbol") and row.get("name")
         ]

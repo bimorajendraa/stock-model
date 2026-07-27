@@ -12,6 +12,7 @@ from pydantic import BaseModel
 class CompanyListItem(BaseModel):
     ticker: str
     company_name: str
+    asset_type: str
     sector_name: str | None = None
     listing_board: str | None = None
     status: str
@@ -20,6 +21,7 @@ class CompanyListItem(BaseModel):
 class CompanyDetail(BaseModel):
     ticker: str
     company_name: str
+    asset_type: str
     sector_name: str | None = None
     subsector_name: str | None = None
     listing_board: str | None = None

@@ -1,6 +1,9 @@
 """Emiten metadata sync: provider -> ``companies`` (spec §5 step 2).
 
-Deliberately minimal: writes only ``ticker`` and ``company_name``. Neither
+Deliberately minimal: writes ``ticker``, ``company_name``, and normalized
+``asset_type``. Asset type prevents provider-returned indices/ETFs from
+entering equity pipelines; it is taken from provider metadata when present
+and conservatively inferred from explicit Index/ETF names otherwise. Neither
 adapter implemented so far (Twelve Data, Sectors.app) returns sector,
 subsector, listing date, listing board, or free float in a bulk-friendly
 way -- see ``CompanyRecord`` in ``src/data_sources/market/base.py`` for
@@ -21,8 +24,33 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from src.data_sources.base import ProviderUnavailableError
-from src.data_sources.market.base import MarketDataProvider
-from src.database.models.company import Company
+from src.data_sources.market.base import CompanyRecord, MarketDataProvider
+from src.database.models.company import AssetType, Company
+
+_PROVIDER_ASSET_TYPES = {
+    "common stock": AssetType.EQUITY.value,
+    "equity": AssetType.EQUITY.value,
+    "stock": AssetType.EQUITY.value,
+    "index": AssetType.INDEX.value,
+    "exchange traded fund": AssetType.ETF.value,
+    "etf": AssetType.ETF.value,
+}
+
+
+def infer_asset_type(record: CompanyRecord) -> str:
+    """Normalize provider metadata, with a conservative name fallback."""
+    raw_type = (record.asset_type or "").strip().casefold()
+    if raw_type in _PROVIDER_ASSET_TYPES:
+        return _PROVIDER_ASSET_TYPES[raw_type]
+
+    normalized_name = record.company_name.strip().casefold()
+    if normalized_name.endswith(" index"):
+        return AssetType.INDEX.value
+    if normalized_name.endswith(" etf") or "exchange traded fund" in normalized_name:
+        return AssetType.ETF.value
+    if raw_type:
+        return AssetType.OTHER.value
+    return AssetType.EQUITY.value
 
 
 @dataclasses.dataclass
@@ -55,12 +83,26 @@ def sync_companies(session: Session, provider: MarketDataProvider) -> SyncOutcom
     existing = {c.ticker: c for c in session.scalars(select(Company))}
 
     for record in records:
+        asset_type = infer_asset_type(record)
         company = existing.get(record.ticker)
         if company is None:
-            session.add(Company(ticker=record.ticker, company_name=record.company_name))
+            session.add(
+                Company(
+                    ticker=record.ticker,
+                    company_name=record.company_name,
+                    asset_type=asset_type,
+                )
+            )
             outcome.companies_created += 1
-        elif company.company_name != record.company_name:
-            company.company_name = record.company_name
-            outcome.companies_updated += 1
+        else:
+            changed = False
+            if company.company_name != record.company_name:
+                company.company_name = record.company_name
+                changed = True
+            if company.asset_type != asset_type:
+                company.asset_type = asset_type
+                changed = True
+            if changed:
+                outcome.companies_updated += 1
 
     return outcome

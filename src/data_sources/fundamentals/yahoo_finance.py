@@ -52,7 +52,7 @@ from src.data_sources.base import (
     ValidationStatus,
 )
 from src.data_sources.fundamentals.base import FinancialStatementDocument, FundamentalsProvider
-from src.data_sources.fundamentals.taxonomy import ACCOUNT_CODE_SECTIONS
+from src.data_sources.fundamentals.taxonomy import ACCOUNT_CODE_SECTIONS, CORE_ACCOUNT_CODES
 from src.data_sources.market.yahoo_finance import default_yahoo_symbol
 
 _SOURCE = SourceDescriptor(
@@ -102,7 +102,7 @@ _YAHOO_FIELD_NAMES: dict[str, tuple[str, ...]] = {
     "capital_expenditure": ("Capital Expenditure",),
     "dividends_paid": ("Cash Dividends Paid",),
 }
-assert _YAHOO_FIELD_NAMES.keys() == ACCOUNT_CODE_SECTIONS.keys()
+assert _YAHOO_FIELD_NAMES.keys() == CORE_ACCOUNT_CODES
 
 
 def _clean(value) -> float | None:
@@ -234,6 +234,7 @@ class YahooFinanceFundamentalsAdapter(FundamentalsProvider):
             currency="IDR",
             scale="unit",
             line_items=entry["line_items"],
+            available_at_basis=f"estimated_period_end_plus_{_ANNUAL_LAG_DAYS if statement_type == 'annual' else _QUARTERLY_LAG_DAYS}_days",
         )
         available_at = _estimated_available_at(period_end, statement_type)
         return SourcedValue(

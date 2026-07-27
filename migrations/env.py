@@ -2,17 +2,15 @@ import sys
 from logging.config import fileConfig
 from pathlib import Path
 
-from sqlalchemy import engine_from_config
-from sqlalchemy import pool
-
 from alembic import context
+from sqlalchemy import engine_from_config, pool
 
 # Make `src` importable when Alembic is invoked from the repo root.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from src.config.settings import get_settings  # noqa: E402
-from src.database.base import Base  # noqa: E402
-import src.database.models  # noqa: E402,F401  -- populates Base.metadata
+import src.database.models  # noqa: F401  -- populates Base.metadata
+from src.config.settings import get_settings
+from src.database.base import Base
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
@@ -73,9 +71,7 @@ def run_migrations_online() -> None:
     )
 
     with connectable.connect() as connection:
-        context.configure(
-            connection=connection, target_metadata=target_metadata
-        )
+        context.configure(connection=connection, target_metadata=target_metadata)
 
         with context.begin_transaction():
             context.run_migrations()

@@ -24,14 +24,10 @@ result as the plain CLI path), but the log noise is a real, observed
 rough edge of Prefect's ephemeral mode, not something this project's code
 causes or can fix.
 
-Given neither a real Prefect server nor its ephemeral mode (which still
-needs `PREFECT_API_URL` cleared, not the project's current `.env`
-default, and still logs the noise above) is part of this project's normal
-running state, the actual "runs automatically every day" mechanism for
-this local machine is a Windows Scheduled Task calling
-``python -m src.cli news sync`` directly (see `docs/news.md`'s scheduling
-section) -- simpler and more reliable than depending on Prefect's
-ephemeral-server behavior for one daily job.
+The normal daily mechanism is now the Docker-supervised
+``src.orchestration.news_scheduler`` service documented in `docs/news.md`.
+It uses PostgreSQL for both an advisory lock and health evidence, so it does
+not depend on Prefect's ephemeral server or an interactive Windows logon.
 This flow exists as real, verified-runnable code so the same ingestion
 logic can be adopted into a real Prefect deployment later (spec/ADR-0002's
 longer-term direction) without being rewritten -- run it manually with
@@ -47,7 +43,9 @@ from prefect.cache_policies import NO_CACHE
 from sqlalchemy.orm import Session
 
 from src.cli.market import _finish_pipeline_run, _start_pipeline_run
-from src.data_sources.news.rss import FEED_REGISTRY, FeedConfig, RSSFeedAdapter
+from src.cli.news import enabled_feed_configs
+from src.config.settings import get_settings
+from src.data_sources.news.rss import FeedConfig, RSSFeedAdapter
 from src.database.session import make_engine
 from src.ingestion.news import NewsIngestOutcome, ingest_news_from_feed
 
@@ -77,12 +75,13 @@ def daily_news_sync_flow(lookback_days: int = _DEFAULT_LOOKBACK_DAYS) -> None:
     since = until - dt.timedelta(days=lookback_days)
 
     engine = make_engine()
+    feed_configs = enabled_feed_configs(get_settings())
     with Session(engine) as session:
         run = _start_pipeline_run(session, "news_sync")
         total_written = 0
         total_skipped = 0
 
-        for config in FEED_REGISTRY:
+        for config in feed_configs:
             outcome = ingest_one_feed(session, config, since, until)
             if outcome.skipped_reason:
                 total_skipped += 1
@@ -95,7 +94,7 @@ def daily_news_sync_flow(lookback_days: int = _DEFAULT_LOOKBACK_DAYS) -> None:
             total_written += outcome.articles_written
 
         _finish_pipeline_run(session, run, total_written, total_skipped, None)
-        logger.info(f"daily_news_sync: {len(FEED_REGISTRY)} feeds, {total_written} articles written, {total_skipped} skipped")
+        logger.info(f"daily_news_sync: {len(feed_configs)} feeds, {total_written} articles written, {total_skipped} skipped")
 
 
 if __name__ == "__main__":

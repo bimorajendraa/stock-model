@@ -4,6 +4,7 @@ fetch_and_store_shares_outstanding hits the real Yahoo Finance API (no
 mock) -- consistent with how this project has verified every other
 external call live rather than trusting an assumed response shape.
 """
+
 from __future__ import annotations
 
 import datetime as dt
@@ -30,6 +31,7 @@ def db_session():
         session.rollback()
 
 
+@pytest.mark.live
 def test_fetch_and_store_shares_outstanding_real_ticker(db_session):
     company = db_session.scalar(select(Company).where(Company.ticker == "BBCA"))
     if company is None:
@@ -57,9 +59,13 @@ def test_fetch_and_store_shares_outstanding_unknown_ticker(db_session):
 
 def test_rank_companies_by_market_cap_orders_descending(db_session):
     now = dt.datetime.now(dt.UTC)
-    source = db_session.scalar(select(DataSourceRegistry).where(DataSourceRegistry.name == "fake_mcap_source"))
+    source = db_session.scalar(
+        select(DataSourceRegistry).where(DataSourceRegistry.name == "fake_mcap_source")
+    )
     if source is None:
-        source = DataSourceRegistry(name="fake_mcap_source", category="market", access_type="internal_derived", is_active=True)
+        source = DataSourceRegistry(
+            name="fake_mcap_source", category="market", access_type="internal_derived", is_active=True
+        )
         db_session.add(source)
         db_session.flush()
 
@@ -108,9 +114,13 @@ def test_rank_companies_by_market_cap_falls_back_when_latest_bar_has_null_close(
     close=NULL, and the old query only ever looked at the single
     latest-dated row."""
     now = dt.datetime.now(dt.UTC)
-    source = db_session.scalar(select(DataSourceRegistry).where(DataSourceRegistry.name == "fake_mcap_source2"))
+    source = db_session.scalar(
+        select(DataSourceRegistry).where(DataSourceRegistry.name == "fake_mcap_source2")
+    )
     if source is None:
-        source = DataSourceRegistry(name="fake_mcap_source2", category="market", access_type="internal_derived", is_active=True)
+        source = DataSourceRegistry(
+            name="fake_mcap_source2", category="market", access_type="internal_derived", is_active=True
+        )
         db_session.add(source)
         db_session.flush()
 
@@ -121,21 +131,35 @@ def test_rank_companies_by_market_cap_falls_back_when_latest_bar_has_null_close(
     db_session.add_all(
         [
             MarketPriceClean(
-                company_id=company.id, trade_date=dt.date(2026, 1, 1), close=1000.0,
-                source_id=source.id, retrieved_at=now, available_at=now,
-                currency="IDR", unit="unit", quality_status=QualityStatus.VALID,
+                company_id=company.id,
+                trade_date=dt.date(2026, 1, 1),
+                close=1000.0,
+                source_id=source.id,
+                retrieved_at=now,
+                available_at=now,
+                currency="IDR",
+                unit="unit",
+                quality_status=QualityStatus.VALID,
             ),
             MarketPriceClean(
-                company_id=company.id, trade_date=dt.date(2026, 1, 2), close=None,
-                source_id=source.id, retrieved_at=now, available_at=now,
-                currency="IDR", unit="unit", quality_status=QualityStatus.VALID,
+                company_id=company.id,
+                trade_date=dt.date(2026, 1, 2),
+                close=None,
+                source_id=source.id,
+                retrieved_at=now,
+                available_at=now,
+                currency="IDR",
+                unit="unit",
+                quality_status=QualityStatus.VALID,
             ),
         ]
     )
     db_session.commit()
 
     try:
-        ranked = rank_companies_by_market_cap(db_session, 10_000)  # see note above: must exceed real company count
+        ranked = rank_companies_by_market_cap(
+            db_session, 10_000
+        )  # see note above: must exceed real company count
         matches = [r for r in ranked if r.ticker == "ZZZM4"]
         assert len(matches) == 1  # must NOT be silently dropped
         assert matches[0].latest_close == 1000.0  # falls back to the last real close

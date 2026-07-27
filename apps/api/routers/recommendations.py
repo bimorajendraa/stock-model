@@ -9,7 +9,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from apps.api.schemas import RecommendationScreenerItem, RecommendationScreenerResponse
-from src.database.models.company import Company
+from src.database.models.company import AssetType, Company
 from src.database.models.ml import RecommendationResult
 from src.database.session import get_session
 
@@ -53,6 +53,7 @@ def list_recommendations(
             & (RecommendationResult.as_of_date == latest.c.latest_date),
         )
         .join(Company, Company.id == RecommendationResult.company_id)
+        .where(Company.asset_type == AssetType.EQUITY.value)
     )
     if label:
         stmt = stmt.where(RecommendationResult.label == label)

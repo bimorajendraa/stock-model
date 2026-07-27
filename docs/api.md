@@ -11,7 +11,7 @@ no business logic in `apps/api/`.
 
 ```
 GET /api/v1/health
-GET /api/v1/companies?q=&offset=&limit=
+GET /api/v1/companies?q=&asset_type=equity&offset=&limit=
 GET /api/v1/companies/{ticker}
 GET /api/v1/companies/{ticker}/snapshot
 GET /api/v1/companies/{ticker}/news?offset=&limit=
@@ -19,7 +19,9 @@ GET /api/v1/recommendations?label=&offset=&limit=
 ```
 
 - `companies` list/detail: `q` filters by ticker or company-name substring
-  (case-insensitive). Detail includes the company's real sector/subsector
+  (case-insensitive). Lists default to `asset_type=equity`; callers can
+  request `index`, `etf`, `other`, or `all`. List and detail responses
+  include `asset_type`. Detail includes the company's real sector/subsector
   from `sector_registry` (`docs/sector_classification.md`), `null` if the
   company hasn't been classified yet.
 - `snapshot`: the single "give me everything computed for this ticker"
@@ -42,19 +44,18 @@ GET /api/v1/recommendations?label=&offset=&limit=
 
 ## Real coverage, stated plainly
 
-Every pipeline behind this API was run against the **top 50 companies by
-market cap** (`docs/market_data.md`), not the full 947-company universe
-(fundamentals/valuation/recommendation especially -- macro/technical
-cover more). Querying the API for a ticker outside that set returns real
-company info from `companies`/`sector_registry` but empty/`null` for
-`technical`, `fundamental_ratios`, `valuation`, `recommendation`. The
-`/recommendations` screener genuinely only has 50 companies to return
-today; real label distribution (`GET /api/v1/recommendations`, checked
-live 2026-07-26): `HOLD` 25, `TUNGGU_HARGA` 13, `AKUMULASI_BERTAHAP` 7,
-`HINDARI` 4, `LAYAK_DIBELI` 1 -- not uniform, and not fabricated to look
-more decisive than the underlying data supports (`docs/recommendation.md`
-already documents that the recommendation engine deliberately excludes
-the unproven Tahap 4 ML signal).
+The initial end-to-end run covered the **top 50 companies by market cap**;
+the completed traversal now covers 650/942 equities for fundamentals/ratios
+and 619/942 for valuation/recommendation.
+Macro/technical cover much more. Querying the API for a ticker outside that
+set returns real company info from `companies`/`sector_registry` but
+empty/`null` for `fundamental_ratios`, `valuation`, and `recommendation`.
+The current 619-company label distribution (checked 2026-07-27) is:
+`HOLD` 266, `TUNGGU_HARGA` 170, `HINDARI` 142,
+`AKUMULASI_BERTAHAP` 37, `LAYAK_DIBELI` 4 -- not uniform, and not
+fabricated to look more decisive than the underlying data supports.
+`docs/recommendation.md` documents why the engine deliberately excludes
+the unproven Tahap 4 ML signal.
 
 ## Real end-to-end verification (2026-07-26)
 
@@ -63,7 +64,8 @@ Tested against the real database, both via `TestClient` (see
 disposable fixture company/sector, same pattern as every other
 integration test in this project) and by actually running
 `uvicorn apps.api.main:app` and issuing real HTTP requests:
-`GET /companies?limit=2` -> 947 real companies; `GET /companies/TLKM` ->
+`GET /companies?limit=2` -> 942 equities by default (947 records with
+`asset_type=all`); `GET /companies/TLKM` ->
 real sector `Communication Services` / `Telecom Services`;
 `GET /companies/TLKM/snapshot` -> real technical feature values (e.g.
 `sma_200=2957.28`); `GET /companies/BCIC/news` -> the real CNBC Indonesia
@@ -77,7 +79,8 @@ under-reading, see `docs/sentiment.md`) `netral` sentiment label attached.
   are planned without a specific need.
 - **Auth** -- no authentication/authorization layer. Fine for local/dev
   use, a real gap before any non-local deployment.
-- **`apps/web` dashboard** -- this API exists to serve one; the frontend
-  itself is still just `apps/web/README.md`, not started.
+- **More API consumers** -- the real `apps/web` dashboard now consumes
+  this API end-to-end, but there is no public/mobile client or stable
+  external API contract yet.
 - **Sub-ticker filters on `/recommendations`** (e.g. by sector) -- only
   `label` filtering exists today.

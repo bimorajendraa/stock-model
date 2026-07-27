@@ -18,7 +18,7 @@ from src.database.models.mixins import QualityStatus
 from src.database.models.ml import ValuationResult
 from src.database.models.ops import DataSourceRegistry
 from src.database.session import make_engine
-from src.valuation.pipeline import compute_valuation
+from src.valuation.pipeline import ValuationAssumptions, compute_valuation
 
 pytestmark = pytest.mark.integration
 
@@ -161,3 +161,113 @@ def test_compute_valuation_skips_insufficient_history(db_session):
     finally:
         db_session.query(Company).filter(Company.id == company.id).delete()
         db_session.commit()
+
+
+def test_compute_valuation_adds_dcf_only_with_explicit_assumptions(db_session, company_with_valuation_inputs):
+    company = company_with_valuation_inputs
+    statement = db_session.scalar(
+        select(FinancialStatementRaw).where(FinancialStatementRaw.company_id == company.id)
+    )
+    source = db_session.get(DataSourceRegistry, statement.source_id)
+    for code, value in {
+        "free_cash_flow": 1_000.0,
+        "cash_and_equivalents": 500.0,
+        "total_debt": 200.0,
+        "shares_outstanding": 100.0,
+    }.items():
+        db_session.add(
+            FinancialStatementItem(
+                statement_id=statement.id,
+                company_id=company.id,
+                statement_section="cash_flow" if code == "free_cash_flow" else "balance_sheet",
+                account_code=code,
+                account_name_reported=code,
+                value=value,
+                source_id=source.id,
+                retrieved_at=statement.retrieved_at,
+                available_at=statement.available_at,
+                period_end=statement.period_end,
+                currency="IDR",
+                unit="unit",
+                is_restated=False,
+                quality_status=QualityStatus.VALID,
+            )
+        )
+    db_session.commit()
+
+    outcome = compute_valuation(
+        db_session,
+        company.ticker,
+        as_of_date=dt.date(2026, 7, 24),
+        assumptions=ValuationAssumptions(
+            discount_rate=0.12,
+            near_term_growth_rate=0.05,
+            terminal_growth_rate=0.03,
+        ),
+    )
+    db_session.commit()
+    assert "discounted_cash_flow" in outcome.methods_used
+    result = db_session.scalar(
+        select(ValuationResult).where(
+            ValuationResult.company_id == company.id,
+            ValuationResult.as_of_date == dt.date(2026, 7, 24),
+        )
+    )
+    assert len(result.sensitivity["dcf_method"]["grid"]) == 9
+
+
+def test_compute_valuation_does_not_invent_missing_dcf_balance_sheet_inputs(
+    db_session, company_with_valuation_inputs
+):
+    company = company_with_valuation_inputs
+    company.shares_outstanding = 999_999  # current master data must not leak into a historical DCF
+    statement = db_session.scalar(
+        select(FinancialStatementRaw).where(FinancialStatementRaw.company_id == company.id)
+    )
+    source = db_session.get(DataSourceRegistry, statement.source_id)
+    for code, value in {
+        "free_cash_flow": 1_000.0,
+        "total_debt": 200.0,
+        "shares_outstanding": 100.0,
+        # cash_and_equivalents deliberately absent
+    }.items():
+        db_session.add(
+            FinancialStatementItem(
+                statement_id=statement.id,
+                company_id=company.id,
+                statement_section="cash_flow" if code == "free_cash_flow" else "balance_sheet",
+                account_code=code,
+                account_name_reported=code,
+                value=value,
+                source_id=source.id,
+                retrieved_at=statement.retrieved_at,
+                available_at=statement.available_at,
+                period_end=statement.period_end,
+                currency="IDR",
+                unit="unit",
+                is_restated=False,
+                quality_status=QualityStatus.VALID,
+            )
+        )
+    db_session.commit()
+
+    outcome = compute_valuation(
+        db_session,
+        company.ticker,
+        as_of_date=dt.date(2026, 7, 25),
+        assumptions=ValuationAssumptions(
+            discount_rate=0.12,
+            near_term_growth_rate=0.05,
+            terminal_growth_rate=0.03,
+        ),
+    )
+    db_session.commit()
+
+    assert "discounted_cash_flow" not in outcome.methods_used
+    result = db_session.scalar(
+        select(ValuationResult).where(
+            ValuationResult.company_id == company.id,
+            ValuationResult.as_of_date == dt.date(2026, 7, 25),
+        )
+    )
+    assert "cash_and_equivalents" in result.sensitivity["dcf_method"]["skipped_reason"]

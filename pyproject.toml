@@ -48,6 +48,7 @@ testpaths = ["src/tests"]
 addopts = "-m 'not integration'"
 markers = [
     "integration: requires a running database (docker compose) -- run explicitly with -m integration",
+    "live: calls a real external provider and is excluded from deterministic CI",
 ]
 
 [tool.ruff]

@@ -2,12 +2,20 @@
 from __future__ import annotations
 
 import datetime as dt
+import enum
 
-from sqlalchemy import BigInteger, ForeignKey, String, Text
+from sqlalchemy import BigInteger, CheckConstraint, ForeignKey, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.database.base import Base
 from src.database.models.mixins import TimestampMixin
+
+
+class AssetType(str, enum.Enum):
+    EQUITY = "equity"
+    INDEX = "index"
+    ETF = "etf"
+    OTHER = "other"
 
 
 class SectorRegistry(Base, TimestampMixin):
@@ -26,13 +34,26 @@ class SectorRegistry(Base, TimestampMixin):
 
 
 class Company(Base, TimestampMixin):
-    """One row per IDX-listed issuer (current identity)."""
+    """One row per IDX-listed instrument (current identity)."""
 
     __tablename__ = "companies"
+    __table_args__ = (
+        CheckConstraint(
+            "asset_type IN ('equity', 'index', 'etf', 'other')",
+            name="ck_companies_asset_type",
+        ),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     ticker: Mapped[str] = mapped_column(String(16), unique=True, nullable=False, index=True)
     company_name: Mapped[str] = mapped_column(String(256), nullable=False)
+    asset_type: Mapped[str] = mapped_column(
+        String(16),
+        nullable=False,
+        default=AssetType.EQUITY.value,
+        server_default=AssetType.EQUITY.value,
+        index=True,
+    )
     sector_registry_id: Mapped[int | None] = mapped_column(ForeignKey("sector_registry.id"), nullable=True)
 
     listing_board: Mapped[str | None] = mapped_column(String(32), nullable=True)  # papan pencatatan

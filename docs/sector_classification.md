@@ -110,21 +110,20 @@ fabricated grouping).
 python -m src.cli sector classify --tickers BBCA,TLKM,ASII
 python -m src.cli sector classify --offset 0 --limit 150
 python -m src.cli sector compute-relative-metrics   # DB-only, no network -- run after classify
+python -m src.cli sector compute-disclosed-metrics --tickers BBCA,ADRO
 ```
 
-## What's not built yet
+## Remaining gaps
 
-- **Real per-company sector-specific disclosed metrics** (banking
-  NPL/NIM/CAR, mining production/reserves, telco ARPU/churn --
-  `IndustryDataProvider.get_metrics`, spec section 3.5) -- still no real
-  source; sector classification alone doesn't provide these.
-- **Sector-relative valuation** (comparing P/E/P/B to real sector peers,
-  not just a company's own history) -- `docs/valuation.md` still only
-  has self-relative valuation; real sector classification now makes this
-  feasible, but it isn't built yet.
-- **Full-universe classification** -- only the top-50-by-market-cap set
-  (plus a couple of early stragglers) is classified; 894 companies remain
-  unclassified.
+- **Official disclosed-metric coverage** -- banking NPL/NIM/CAR/LDR/CASA and
+  mining reserve/production/cost computations are implemented, but require
+  applicable facts from the authorized XBRL archive. Missing facts produce no
+  metric, not an estimate. Telco ARPU/churn remains unimplemented.
+- **Sector-relative valuation** is now implemented with at least three usable
+  same-sector peers; see `docs/valuation.md`. Production valuations have not
+  yet been recomputed with this method.
+- **Full-universe classification** currently covers 917/942 equities; 25
+  provider records returned no usable classification.
 - **investment_style classification** in the recommendation engine
   (`docs/recommendation.md`) -- real sector data could inform this now,
   not wired up yet.

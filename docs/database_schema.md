@@ -16,18 +16,31 @@ explaining its design choices).
 
 | Module | Tables | Notes |
 |---|---|---|
-| `company.py` | `sector_registry`, `companies`, `company_aliases` | Aliases preserve delisted/renamed issuers to avoid survivorship bias (§3.1) |
+| `company.py` | `sector_registry`, `companies`, `company_aliases` | `companies.asset_type` separates equities from indices/ETFs/other instruments; aliases preserve ticker/name history and feed auditable news entity matching |
 | `market.py` | `market_prices_raw`, `market_prices_clean`, `corporate_actions`, `dividends`, `company_provider_symbols`, `market_price_quarantine`, `market_data_reconciliation` | raw vs. clean are separate tables by design (§3.2); Tahap 2 added the last three for multi-provider ticker mapping, failed-validation quarantine, and cross-provider reconciliation |
 | `fundamentals.py` | `financial_statements_raw`, `financial_statement_items`, `financial_ratios` | items are long-format (one row per account); ratios never LLM-computed (§2.15) |
 | `sector.py` | `sector_specific_metrics` | long-format (metric_name/value); which metrics apply per sector is config (§3.5), not schema |
 | `macro.py` | `macro_series`, `industry_series` | economy-wide vs. commodity/index series |
-| `news.py` | `news_articles`, `news_entities`, `news_sentiment`, `reputation_events` | sentiment is a separate table tied to model_version, never overwrites article text |
+| `news.py` | `news_articles`, `news_entities`, `news_sentiment`, `reputation_events` | entity links retain `match_method`/`matched_text`; sentiment is model-versioned and never overwrites article text |
 | `features.py` | `technical_features`, `fundamental_features`, `model_features` | long-format per-indicator tables + a JSONB assembled snapshot for model input |
 | `ml.py` | `model_versions`, `training_runs`, `predictions`, `valuation_results`, `recommendation_results` | payloads are JSONB where shape is horizon/method-dependent |
-| `ops.py` | `data_source_registry`, `pipeline_runs`, `data_quality_results`, `alerts` | `data_source_registry` is what every `source_id` FK points at |
+| `ops.py` | `data_source_registry`, `data_sources`, `pipeline_runs`, `pipeline_company_results`, `data_quality_results`, `alerts` | `data_source_registry` is what every `source_id` FK points at; `pipeline_company_results` is the append-only per-emiten attempt log used by resumable retry cooldowns |
 
-32 tables total (29 from spec §4's minimum list + 3 added in Tahap 2 for
-multi-provider market-data operations, see above).
+34 tables total: the spec minimum plus multi-provider market-data
+operations, the provider capability audit registry, and per-emiten
+pipeline attempt results.
+
+`pipeline_company_results` records `succeeded`, `no_data`, or `failed`
+for every company attempt, linked to both `pipeline_runs` and `companies`.
+It stores `attempted_at`, optional `retry_after`, and a diagnostic message;
+it never creates fake placeholder rows in a pipeline's fact table. Batch
+selection consults the latest attempt per pipeline/company so an old
+cooldown cannot override a newer forced retry.
+
+`companies.asset_type` is constrained to `equity`, `index`, `etf`, or
+`other` and indexed for universe selection. Default pipelines select active
+equities; master records and existing history for other instruments remain
+available, and explicit ticker selection can override the default.
 
 Note: `market_prices_raw.volume`, `market_prices_clean.volume`, and
 `market_data_reconciliation.volume_difference` are `BIGINT`, not the

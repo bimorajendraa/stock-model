@@ -24,7 +24,7 @@ from __future__ import annotations
 import datetime as dt
 import enum
 
-from sqlalchemy import Enum, String, Text
+from sqlalchemy import CheckConstraint, Enum, ForeignKey, Index, String, Text
 from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -139,6 +139,48 @@ class PipelineRun(Base, TimestampMixin):
     records_in: Mapped[int | None] = mapped_column(nullable=True)
     records_failed: Mapped[int | None] = mapped_column(nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class PipelineCompanyResult(Base, TimestampMixin):
+    """One durable result for each company attempt inside a pipeline run.
+
+    This is intentionally an append-only attempt log rather than a marker
+    row in a fact table.  A provider returning no data is operationally
+    different from a company that has never been tried, while neither case
+    is valid fact data.  ``retry_after`` lets resumable batch commands avoid
+    repeatedly calling a provider for the same known-empty ticker.
+    """
+
+    __tablename__ = "pipeline_company_results"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('succeeded', 'no_data', 'failed')",
+            name="ck_pipeline_company_results_status",
+        ),
+        Index(
+            "ix_pipeline_company_results_pipeline_company",
+            "pipeline_name",
+            "company_id",
+        ),
+        Index(
+            "ix_pipeline_company_results_pipeline_retry_after",
+            "pipeline_name",
+            "retry_after",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    pipeline_run_id: Mapped[int] = mapped_column(
+        ForeignKey("pipeline_runs.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    company_id: Mapped[int] = mapped_column(
+        ForeignKey("companies.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    pipeline_name: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    attempted_at: Mapped[dt.datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
+    retry_after: Mapped[dt.datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    message: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class DataQualityResult(Base, TimestampMixin):

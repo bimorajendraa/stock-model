@@ -3,8 +3,9 @@
 
 Real, deduplicated (``canonical_url`` has a real DB unique constraint --
 genuine ``ON CONFLICT`` upsert for ``news_articles``, not clear-then-
-rewrite), entity-linked via ticker-code matching against every real
-company (spec section 2.18-19: article content is untrusted input, never
+rewrite), entity-linked via provider/current/previous ticker and current/
+previous company-name matching against every real equity (spec section
+2.18-19: article content is untrusted input, never
 executed as an instruction -- it is only ever matched against, never
 interpreted). ``news_entities`` has no unique constraint of its own
 (Tahap 1 schema) -- idempotency there is clear-then-rewrite per article,
@@ -12,10 +13,9 @@ same pattern as ``technical_features``/``financial_ratios`` elsewhere in
 this project.
 
 **Known, honestly-stated limitations**:
-- Entity linking matches only the raw ticker code as a whole word in the
-  title/summary (e.g. "BBCA") -- it will miss articles that only use a
-  company's *name* ("Bank Central Asia"). No company-name-alias
-  dictionary is built yet.
+- Company aliases only improve coverage after a verified alias CSV has been
+  imported; the existing production table is empty. Short/generic name variants
+  are deliberately rejected to protect precision.
 - Semantic/embedding-based deduplication (``NewsArticle.title_embedding``,
   spec's cross-source-confirmation intent) is NOT implemented -- no
   embedding model is configured. ``is_duplicate``/``duplicate_of_id``/
@@ -34,11 +34,11 @@ from sqlalchemy.orm import Session
 
 from src.data_sources.base import ProviderUnavailableError, SourceDescriptor
 from src.data_sources.news.base import NewsProvider
-from src.data_sources.news.rss import _ticker_pattern
-from src.database.models.company import Company
+from src.database.models.company import AssetType, Company, CompanyAlias
 from src.database.models.mixins import QualityStatus
 from src.database.models.news import NewsArticle, NewsEntity
 from src.database.models.ops import DataSourceRegistry
+from src.ingestion.entity_matching import match_company_entities
 from src.ingestion.resilience import with_retry
 
 
@@ -94,11 +94,25 @@ def ingest_news_from_feed(
         return outcome
 
     source = _get_or_create_source(session, result.source, category="news")
+    usage_restriction = getattr(provider, "usage_restriction", None)
+    if usage_restriction:
+        source.notes = f"usage_restriction={usage_restriction}"
     now = dt.datetime.now(dt.UTC)
 
     # Ticker-code entity matching needs every real company's ticker --
     # loaded once per call, not once per article.
-    companies = list(session.scalars(select(Company)))
+    companies = list(
+        session.scalars(
+            select(Company).where(
+                Company.asset_type == AssetType.EQUITY.value,
+                Company.status == "active",
+            )
+        )
+    )
+    company_ids = [company.id for company in companies]
+    aliases = list(
+        session.scalars(select(CompanyAlias).where(CompanyAlias.company_id.in_(company_ids)))
+    ) if company_ids else []
 
     for article in articles:
         available_at = article.published_at or now
@@ -137,13 +151,27 @@ def ingest_news_from_feed(
         # today's still-recent articles) doesn't accumulate duplicates.
         session.query(NewsEntity).filter(NewsEntity.article_id == article_id).delete()
 
-        haystack = f"{article.title} {article.summary or ''}"
-        matched_company_ids = [c.id for c in companies if _ticker_pattern(c.ticker).search(haystack)]
-        if matched_company_ids:
+        haystack = f"{article.title} {article.summary or ''} {article.content_snippet or ''}"
+        matches = match_company_entities(
+            haystack,
+            companies,
+            aliases,
+            mentioned_tickers=article.mentioned_tickers,
+        )
+        if matches:
             session.execute(
                 insert(NewsEntity),
-                [{"article_id": article_id, "company_id": company_id} for company_id in matched_company_ids],
+                [
+                    {
+                        "article_id": article_id,
+                        "company_id": match.company_id,
+                        "relevance_score": match.relevance_score,
+                        "match_method": match.match_method,
+                        "matched_text": match.matched_text,
+                    }
+                    for match in matches
+                ],
             )
-            outcome.entity_links_written += len(matched_company_ids)
+            outcome.entity_links_written += len(matches)
 
     return outcome

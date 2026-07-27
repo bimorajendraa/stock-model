@@ -1,9 +1,7 @@
 """Integration tests for fundamentals ingestion -- requires a live
-database. Most tests hit the real Yahoo Finance API (no mock), consistent
-with how every other ingestion path in this project is verified; the
-completeness/quality_status tests use a small fake provider instead so
-they're deterministic (real-data sparsity isn't guaranteed to reproduce
-the same sparse period forever).
+database. Tests that also hit Yahoo Finance are explicitly marked
+``live`` so deterministic CI never depends on provider availability; the
+completeness/quality_status tests use a small fake provider.
 
 **Every test here uses a dedicated fixture Company, never a real ticker's
 row directly** -- ``ingest_fundamentals`` does a full clear-then-rewrite
@@ -18,6 +16,7 @@ company just uses a fake ticker string with the adapter's
 ``symbol_resolver`` overridden to the real ``BBCA.JK`` symbol, so the
 provider call is real but the row it's stored under is disposable.
 """
+
 from __future__ import annotations
 
 import datetime as dt
@@ -54,13 +53,25 @@ def db_session():
 def fixture_company(db_session):
     """A disposable Company row real ingestion/cleanup can freely mutate,
     decoupled from any real ticker's production data."""
+    _delete_fixture_company(db_session)
     company = Company(ticker=_FIXTURE_TICKER, company_name="Test Fixture BBCA-shadow Co")
     db_session.add(company)
     db_session.commit()
-    yield company
-    db_session.query(FinancialStatementItem).filter(FinancialStatementItem.company_id == company.id).delete()
-    db_session.query(FinancialStatementRaw).filter(FinancialStatementRaw.company_id == company.id).delete()
-    db_session.query(Company).filter(Company.id == company.id).delete()
+    try:
+        yield company
+    finally:
+        db_session.rollback()
+        _delete_fixture_company(db_session)
+
+
+def _delete_fixture_company(db_session: Session) -> None:
+    """Recover cleanly even if a previous pytest process was interrupted."""
+    existing = db_session.scalar(select(Company).where(Company.ticker == _FIXTURE_TICKER))
+    if existing is None:
+        return
+    db_session.query(FinancialStatementItem).filter(FinancialStatementItem.company_id == existing.id).delete()
+    db_session.query(FinancialStatementRaw).filter(FinancialStatementRaw.company_id == existing.id).delete()
+    db_session.query(Company).filter(Company.id == existing.id).delete()
     db_session.commit()
 
 
@@ -77,7 +88,9 @@ class _FakeFundamentalsProvider(FundamentalsProvider):
 
     def __init__(self, documents: dict[str, dict[str, float]]) -> None:
         self._documents = documents  # fiscal_period -> line_items
-        self._source = SourceDescriptor(name="fake_fundamentals", url="https://example.invalid", access_type=AccessType.FALLBACK_PROVIDER)
+        self._source = SourceDescriptor(
+            name="fake_fundamentals", url="https://example.invalid", access_type=AccessType.FALLBACK_PROVIDER
+        )
 
     @property
     def provider_name(self) -> str:
@@ -117,6 +130,7 @@ class _FakeFundamentalsProvider(FundamentalsProvider):
         )
 
 
+@pytest.mark.live
 def test_ingest_fundamentals_bbca_writes_real_statements(db_session, fixture_company):
     provider = _real_bbca_provider()
     run_uuid = str(uuid.uuid4())
@@ -154,6 +168,7 @@ def test_ingest_fundamentals_bbca_writes_real_statements(db_session, fixture_com
     assert all(r.quality_status == QualityStatus.VALID for r in raws)
 
 
+@pytest.mark.live
 def test_ingest_fundamentals_is_idempotent_on_rerun(db_session, fixture_company):
     provider = _real_bbca_provider()
     first = ingest_fundamentals(db_session, provider, _FIXTURE_TICKER, str(uuid.uuid4()))
@@ -211,3 +226,25 @@ def test_complete_enough_statement_is_marked_valid(db_session, fixture_company):
         select(FinancialStatementRaw).where(FinancialStatementRaw.company_id == fixture_company.id)
     )
     assert raw.quality_status == QualityStatus.VALID
+
+
+def test_official_xbrl_available_at_basis_is_not_labeled_estimated(db_session, fixture_company):
+    provider = _FakeFundamentalsProvider({"2025FY": {"net_income": 1000.0, "total_assets": 5000.0}})
+    original_get = provider.get_statement
+
+    def official_get(ticker, fiscal_period):
+        result = original_get(ticker, fiscal_period)
+        result.value.source_format = "xbrl"
+        result.value.available_at_basis = "official_idx_publication_timestamp"
+        result.value.filing_reference = "IDX-TEST-1"
+        return result
+
+    provider.get_statement = official_get
+    ingest_fundamentals(db_session, provider, _FIXTURE_TICKER, str(uuid.uuid4()))
+    db_session.commit()
+
+    raw = db_session.scalar(
+        select(FinancialStatementRaw).where(FinancialStatementRaw.company_id == fixture_company.id)
+    )
+    assert raw.raw_payload["available_at_basis"] == "official_idx_publication_timestamp"
+    assert raw.raw_payload["filing_reference"] == "IDX-TEST-1"

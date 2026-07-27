@@ -169,9 +169,9 @@ since none of these expose a real per-observation publish timestamp.
 
 `ihsg_composite` unblocked `docs/technical_features.md`'s market-relative
 features (beta/alpha/relative strength vs. IHSG). The new BI-Rate/SEKI
-series are a real, disclosed step toward `docs/valuation.md`'s still-open
-"no real Indonesia discount-rate input for DCF" gap -- not yet wired into
-valuation, but the raw data no longer needs to be sourced from scratch.
+series provide inputs for a future documented Indonesia WACC policy. DCF is
+now implemented with explicit operator assumptions, but macro series are not
+silently converted into a discount rate.
 
 ## CLI
 
@@ -189,6 +189,6 @@ python -m src.cli macro sync --series bi_lending_facility_rate,bi_deposit_facili
 - **Full SEKI breadth** -- 1 of ~108 real cataloged tables covered.
 - **FRED live verification** -- code-complete, needs a registered
   `FRED_API_KEY` (free) to actually confirm against a real response.
-- **Feeding macro series into valuation (DCF) or the recommendation
-  engine** -- the real BI-Rate/SEKI data needed for a real Indonesia
-  discount rate now exists, but isn't wired into `docs/valuation.md` yet.
+- **Macro-derived WACC and recommendation inputs** -- DCF accepts explicit
+  configured rates, but deriving a company discount rate from BI-Rate/SEKI,
+  leverage, and equity risk premium still needs a documented validation policy.

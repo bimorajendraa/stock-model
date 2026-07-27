@@ -232,8 +232,9 @@ not a silent success).
   before writing them off: they don't need a *longer label horizon* on
   the *current* history depth, they need *more historical statements*
   (the actual blocker is calendar coverage, not horizon choice) --
-  already flagged in `docs/fundamentals.md`'s "not built yet" (a second
-  provider or real-filing-date/XBRL source with deeper history).
+  now addressed structurally by the official-XBRL archive adapter, but still
+  operationally blocked until an authorized archive with deeper history is
+  configured and ingested.
 
 ### What this means for "should Tahap 3 be finished first"
 
@@ -247,13 +248,13 @@ structural (near-random-walk short/medium-term price action, consistent
 with financial theory) rather than something more features of the same
 kind (macro regime, sentiment) are guaranteed to fix, though they remain
 architecturally expected by the spec and untested here. Widening the
-company universe from 50 to 944 would add more independent series
+equity universe from 50 to 942 would add more independent series
 (helps variance/overfitting somewhat) but doesn't address either root
 cause identified above.
 
 ## Mid-cap experiment (2026-07-25) -- is the ceiling mega-cap-specific?
 
-A more targeted hypothesis than "widen to all 944 companies": IDX's top-50
+A more targeted hypothesis than "widen to all 942 equities": IDX's top-50
 by market cap are the most liquid, most analyst-covered stocks on the
 exchange -- textbook efficient-market territory. Small/mid-cap stocks
 with thinner analyst coverage are the classic place market-efficiency

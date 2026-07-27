@@ -37,10 +37,10 @@ workaround" problem (`TermsOfServiceViolation` in
 | Category | Interface | Spec section | Adapter count requirement |
 |---|---|---|---|
 | Market data (OHLCV, corporate actions) | `src/data_sources/market/base.py::MarketDataProvider` | §3.2 | >=2 adapters -- **done**: `twelve_data.py`, `sectors_app.py`, `yahoo_finance.py` (research-only fallback) |
-| Fundamentals (financial statements) | `src/data_sources/fundamentals/base.py::FundamentalsProvider` | §3.3 | prioritize XBRL/structured over PDF/OCR -- **1 of 2+ done**: `yahoo_finance.py` (research-only, see `docs/fundamentals.md`) |
+| Fundamentals (financial statements) | `src/data_sources/fundamentals/base.py::FundamentalsProvider` | §3.3 | official-first structured chain implemented: authorized IDX XBRL archive + Yahoo research fallback; official coverage awaits a configured archive |
 | Macro (BI-Rate, inflation, FX, global macro) | `src/data_sources/macro/base.py::MacroDataProvider` | §3.4 | one per publisher -- **1 of 2+ done**: `yahoo_finance.py` (research-only, FX/global-yield/IHSG/commodity only, see `docs/macro_data.md`) |
-| Industry/sector-specific metrics | `src/data_sources/industry/base.py::IndustryDataProvider` | §3.5 | one per sector where disclosed -- blocked on real sector classification data (see company-master-data-quality note below) |
-| News | `src/data_sources/news/base.py::NewsProvider` | §3.6 | target >=5 distinct domains per company analysis, cap ~10 |
+| Industry/sector-specific metrics | filing taxonomy + `src/features/sector/disclosed.py` | §3.5 | bank NPL/NIM/CAR/LDR/CASA and mining reserve/production/cost metrics implemented; rows require disclosed filing facts |
+| News | `src/data_sources/news/base.py::NewsProvider` | §3.6 | 5 domains in research mode, 4 production-safe; see `docs/news.md` |
 
 ## Market data: what was actually investigated (2026-07-24)
 
@@ -65,24 +65,21 @@ Findings, so this isn't re-investigated from scratch later:
 - **Twelve Data** (`src/data_sources/market/twelve_data.py`) -- real,
   documented REST API, genuinely free to register (confirmed via live
   error message, not marketing copy). `GET /stocks?exchange=IDX` returns
-  real IDX tickers even with the public `demo` key (947 synced into the
-  database, verified live). `GET /time_series` needs a real (still free)
+  real IDX tickers even with the public `demo` key (947 instruments synced
+  into the database, verified live: 942 equities + 5 indices).
+  `GET /time_series` needs a real (still free)
   key, and a capability probe (`src/data_sources/market/capability.py`)
   actually checks whether that key's plan covers XIDX before trusting it
   -- never assumes "key present" means "usable." access_type:
   `documented_free`. Corporate actions endpoint NOT implemented -- its
   contract wasn't verified before this was written, so it's left as
   `NotImplementedError` rather than guessed.
-- **Twelve Data's own `/stocks` listing has a data quality issue**: it
-  includes at least 3 non-equity entries -- `IDXSMC.COM`, `I.GRADE`,
-  `IDXSMC.LIQ` -- none of which are real tradable equities (Yahoo Finance
-  correctly returns 404 for all three `.JK` symbols; these read as IDX
-  index/composite codes misclassified as companies). Surfaced during the
-  Tahap 2 full-universe backfill (3 of 947 companies); handled gracefully
-  (skipped, logged, did not crash the batch), not silently ignored. A
-  reminder that "official API returned it" still isn't the same as "it's
-  real data" -- ingestion
-  code has to handle upstream data quality issues, not just its own.
+- **Twelve Data's own `/stocks` listing mixes asset types**: five records
+  are indices (`I.GRADE`, `IDXBUMN20`, `IDXHIDIV20`, `IDXSMC.COM`, and
+  `IDXSMC.LIQ`), not tradable equities. Three have no Yahoo Finance series;
+  two do have usable market history. They are retained as real master
+  records with `asset_type=index`, while default equity pipelines exclude
+  them. Explicit ticker selection remains an operator override.
 - **Sectors.app** (`src/data_sources/market/sectors_app.py`) -- IDX-focused,
   implemented directly against the live OpenAPI schema at
   `https://api.sectors.app/schema/` (docs.sectors.app itself 403s automated
@@ -109,7 +106,7 @@ fails -- ingestion code must catch this and fall back per spec §33.
 Neither market-data adapter returns sector, subsector, listing date,
 listing board, or free float in a bulk-friendly way:
 
-- Twelve Data's `/stocks` gives ticker + name only.
+- Twelve Data's `/stocks` gives ticker + name + a coarse instrument type.
 - Sectors.app's `/v2/companies/` screener supports filtering/sorting on
   those richer fields but, per its own schema (`CompanyScreenerItem`),
   only *returns* `symbol` + `company_name` per row -- getting the rest
@@ -118,18 +115,20 @@ listing board, or free float in a bulk-friendly way:
 
 So `MarketDataProvider.list_companies()` (both adapters) and
 `src/ingestion/company_sync.py` are intentionally thin: they sync
-ticker + name only, and never touch sector/subsector/listing_date/etc. --
+ticker + name + normalized `asset_type`, and never touch
+sector/subsector/listing_date/etc. --
 those columns stay `NULL` rather than being guessed. A real "data master
 saham" source (properly IDX itself, or another official registry) is
 still needed for that data; company_sync only unblocks
 `ingest_ohlcv`'s FK requirement in the meantime. Verified live
-end-to-end on 2026-07-24: 947 real IDX companies synced from Twelve Data
-into the local database, idempotent on re-run (0 created/updated second
-time).
+end-to-end on 2026-07-24: 947 real IDX instruments synced from Twelve Data
+into the local database. A later classification audit identified 942
+equities and 5 indices; sync remains idempotent on re-run.
 
 `company_sync.sync_companies` never deletes or delists a company just
 because one provider call didn't mention it (spec §3.1 survivorship-bias
-rule) -- it only adds new tickers and updates names of existing ones.
+rule) -- it only adds new tickers and updates names or asset types of
+existing ones.
 
 ## OHLCV backfill: real results (2026-07-25)
 
@@ -140,11 +139,10 @@ added `--offset`/`--limit`), no fixtures, real Yahoo Finance data
 (Twelve Data's `demo` key can't fetch prices, only listings -- see
 `docs/provider_capabilities.md`):
 
-- **944 of 947 companies succeeded** (99.7%). The 3 failures are
-  `IDXSMC.COM`, `I.GRADE`, and `IDXSMC.LIQ` -- all confirmed non-equity
-  entries (IDX index/composite codes, Yahoo Finance correctly 404s their
-  `.JK` symbol) present in Twelve Data's own `/stocks` listing, not a bug
-  in ingestion. See the company-master-data-quality note above.
+- **All 942 equities succeeded**. Two indices (`IDXBUMN20` and
+  `IDXHIDIV20`) also had usable history, producing 944 covered instruments;
+  the other three indices had no Yahoo Finance series. See the
+  company-master asset-type note above.
 - **1,706,497 OHLCV rows written**, spanning 2016-07-25 to 2026-07-24 (the
   10-year backfill window; many tickers have shorter real history because
   they IPO'd more recently -- e.g. AADI only goes back to 2024-12-05).
@@ -153,7 +151,7 @@ added `--offset`/`--limit`), no fixtures, real Yahoo Finance data
   `validate_ohlcv_bar` rather than written to `market_prices_raw`).
 - Idempotency verified on the initial 10-ticker smoke test before the full
   run: re-running the same window produced zero row-count growth and
-  updated one bar's values in place. The full 944-company run reuses the
+  updated one bar's values in place. The full 944-instrument run reuses the
   identical upsert code path.
 - Two real bugs were found and fixed by this process before the full run
   (see the "test: add live market ingestion smoke test" commit): a 32-bit

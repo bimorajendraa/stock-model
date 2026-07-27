@@ -25,6 +25,7 @@ async function apiFetch<T>(path: string): Promise<T> {
 export type CompanyListItem = {
   ticker: string;
   company_name: string;
+  asset_type: string;
   sector_name: string | null;
   listing_board: string | null;
   status: string;
@@ -40,6 +41,7 @@ export type CompanyListResponse = {
 export type CompanyDetail = {
   ticker: string;
   company_name: string;
+  asset_type: string;
   sector_name: string | null;
   subsector_name: string | null;
   listing_board: string | null;
@@ -115,9 +117,17 @@ export type RecommendationScreenerResponse = {
   limit: number;
 };
 
-export function listCompanies(params: { q?: string; offset?: number; limit?: number } = {}) {
+export function listCompanies(
+  params: {
+    q?: string;
+    asset_type?: "equity" | "index" | "etf" | "other" | "all";
+    offset?: number;
+    limit?: number;
+  } = {},
+) {
   const qs = new URLSearchParams();
   if (params.q) qs.set("q", params.q);
+  if (params.asset_type) qs.set("asset_type", params.asset_type);
   if (params.offset !== undefined) qs.set("offset", String(params.offset));
   if (params.limit !== undefined) qs.set("limit", String(params.limit));
   const suffix = qs.toString() ? `?${qs.toString()}` : "";

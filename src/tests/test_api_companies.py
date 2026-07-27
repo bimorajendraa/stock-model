@@ -27,6 +27,7 @@ from src.database.session import make_engine
 pytestmark = pytest.mark.integration
 
 _FIXTURE_TICKER = "ZZZAPI"
+_FIXTURE_INDEX_TICKER = "ZZZAPIIDX"
 _FIXTURE_SECTOR_CODE = "zzztest_api_sector"
 _FAKE_SOURCE_NAME = "fake_api_test_source"
 
@@ -156,6 +157,7 @@ def _cleanup(db_session, fixture_company, fixture_source):
     db_session.query(RecommendationResult).filter(RecommendationResult.company_id == fixture_company.id).delete()
     db_session.query(DataSourceRegistry).filter(DataSourceRegistry.id == fixture_source.id).delete()
     db_session.query(Company).filter(Company.ticker == _FIXTURE_TICKER).delete()
+    db_session.query(Company).filter(Company.ticker == _FIXTURE_INDEX_TICKER).delete()
     db_session.query(SectorRegistry).filter(SectorRegistry.sector_code == _FIXTURE_SECTOR_CODE).delete()
     db_session.commit()
 
@@ -166,6 +168,7 @@ def test_list_companies_search_by_ticker(client, fixture_company):
     body = resp.json()
     assert body["total"] == 1
     assert body["items"][0]["ticker"] == _FIXTURE_TICKER
+    assert body["items"][0]["asset_type"] == "equity"
     assert body["items"][0]["sector_name"] == "Test Sector"
 
 
@@ -174,7 +177,32 @@ def test_get_company_detail(client, fixture_company):
     assert resp.status_code == 200
     body = resp.json()
     assert body["company_name"] == "Test Fixture API Co"
+    assert body["asset_type"] == "equity"
     assert body["subsector_name"] == "Test Subsector"
+
+
+def test_company_list_defaults_to_equity_but_can_include_index(client, db_session):
+    db_session.add(
+        Company(
+            ticker=_FIXTURE_INDEX_TICKER,
+            company_name="Test API Index",
+            asset_type="index",
+        )
+    )
+    db_session.commit()
+
+    default_resp = client.get(f"/api/v1/companies?q={_FIXTURE_INDEX_TICKER}")
+    all_resp = client.get(
+        f"/api/v1/companies?q={_FIXTURE_INDEX_TICKER}&asset_type=all"
+    )
+    detail_resp = client.get(f"/api/v1/companies/{_FIXTURE_INDEX_TICKER}")
+
+    assert default_resp.status_code == 200
+    assert default_resp.json()["total"] == 0
+    assert all_resp.status_code == 200
+    assert all_resp.json()["items"][0]["asset_type"] == "index"
+    assert detail_resp.status_code == 200
+    assert detail_resp.json()["asset_type"] == "index"
 
 
 def test_get_company_detail_unknown_ticker_is_404(client):

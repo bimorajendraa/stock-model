@@ -16,11 +16,14 @@ from src.data_sources.base import SourcedValue
 class FinancialStatementDocument:
     __slots__ = (
         "auditor_opinion",
+        "available_at_basis",
         "company_ticker",
         "currency",
         "document_url",
+        "filing_reference",
         "fiscal_period",
         "going_concern_flag",
+        "line_item_units",
         "line_items",
         "scale",
         "source_format",
@@ -39,6 +42,9 @@ class FinancialStatementDocument:
         auditor_opinion: str | None = None,
         going_concern_flag: bool = False,
         document_url: str | None = None,
+        available_at_basis: str | None = None,
+        filing_reference: str | None = None,
+        line_item_units: dict[str, str] | None = None,
     ) -> None:
         self.company_ticker = company_ticker
         self.statement_type = statement_type
@@ -50,6 +56,9 @@ class FinancialStatementDocument:
         self.auditor_opinion = auditor_opinion
         self.going_concern_flag = going_concern_flag
         self.document_url = document_url
+        self.available_at_basis = available_at_basis
+        self.filing_reference = filing_reference
+        self.line_item_units = line_item_units or {}
 
 
 class FundamentalsProvider(ABC):

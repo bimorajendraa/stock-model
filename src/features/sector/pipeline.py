@@ -19,7 +19,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from src.data_sources.base import AccessType, SourceDescriptor
-from src.database.models.company import Company, SectorRegistry
+from src.database.models.company import AssetType, Company, SectorRegistry
 from src.database.models.fundamentals import FinancialRatio
 from src.database.models.mixins import QualityStatus
 from src.database.models.ops import DataSourceRegistry
@@ -92,7 +92,14 @@ def compute_sector_relative_metrics(session: Session, sector_registry_id: int) -
         return outcome
     outcome.sector_name = sector.sector_name
 
-    companies = list(session.scalars(select(Company).where(Company.sector_registry_id == sector_registry_id)))
+    companies = list(
+        session.scalars(
+            select(Company).where(
+                Company.sector_registry_id == sector_registry_id,
+                Company.asset_type == AssetType.EQUITY.value,
+            )
+        )
+    )
     outcome.companies_considered = len(companies)
     if not companies:
         outcome.skipped_reason = "no companies classified into this sector"

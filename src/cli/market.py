@@ -5,13 +5,14 @@ Every command records a ``pipeline_runs`` row (run_uuid doubles as
 success, non-zero if anything failed, per spec: "Command harus
 mengembalikan exit code non-zero apabila gagal."
 """
+
 from __future__ import annotations
 
 import datetime as dt
 import logging
 import uuid
 
-from sqlalchemy import select
+from sqlalchemy import Select, select
 from sqlalchemy.orm import Session
 
 from src.config.settings import Settings
@@ -19,7 +20,7 @@ from src.data_sources.market.capability import ProviderAccessError
 from src.data_sources.market.selector import MarketDataProviderSelector, NoLicensedProviderAvailableError
 from src.data_sources.market.twelve_data import TwelveDataMarketProvider
 from src.data_sources.market.yahoo_finance import YahooFinanceOHLCVAdapter
-from src.database.models.company import Company
+from src.database.models.company import AssetType, Company
 from src.database.models.market import MarketPriceRaw
 from src.database.models.ops import PipelineRun
 from src.ingestion.corporate_actions import ingest_corporate_actions
@@ -31,6 +32,17 @@ from src.ingestion.resilience import CircuitBreaker, RateLimiter
 from src.preprocessing.market_prices import build_clean_prices
 
 logger = logging.getLogger(__name__)
+
+
+def _equity_companies_stmt() -> Select[tuple[Company]]:
+    return (
+        select(Company)
+        .where(
+            Company.asset_type == AssetType.EQUITY.value,
+            Company.status == "active",
+        )
+        .order_by(Company.ticker)
+    )
 
 
 def build_selector(settings: Settings) -> MarketDataProviderSelector:
@@ -47,10 +59,15 @@ def build_selector(settings: Settings) -> MarketDataProviderSelector:
 
 
 def _probe_ticker(session: Session) -> str | None:
-    preferred = session.scalar(select(Company).where(Company.ticker == "BBCA"))
+    preferred = session.scalar(
+        select(Company).where(
+            Company.ticker == "BBCA",
+            Company.asset_type == AssetType.EQUITY.value,
+        )
+    )
     if preferred is not None:
         return preferred.ticker
-    any_company = session.scalar(select(Company).order_by(Company.ticker))
+    any_company = session.scalar(_equity_companies_stmt())
     return any_company.ticker if any_company else None
 
 
@@ -62,7 +79,7 @@ def _select_companies(session: Session, count: int) -> list[Company]:
     docs/data_sources.md's company-master-data limitation), so an even
     spread across tickers is the best proxy available without that
     metadata."""
-    all_companies = list(session.scalars(select(Company).order_by(Company.ticker)))
+    all_companies = list(session.scalars(_equity_companies_stmt()))
     if not all_companies:
         return []
     if count >= len(all_companies):
@@ -83,12 +100,19 @@ def _start_pipeline_run(session: Session, pipeline_name: str) -> PipelineRun:
     return run
 
 
-def _finish_pipeline_run(session: Session, run: PipelineRun, records_in: int, records_failed: int, error: str | None) -> None:
+def _finish_pipeline_run(
+    session: Session,
+    run: PipelineRun,
+    records_in: int,
+    records_failed: int,
+    error: str | None,
+    failure_details: str | None = None,
+) -> None:
     run.status = "failed" if error else ("partial" if records_failed else "succeeded")
     run.completed_at = dt.datetime.now(dt.UTC)
     run.records_in = records_in
     run.records_failed = records_failed
-    run.error_message = error
+    run.error_message = error or failure_details
     session.commit()
 
 
@@ -187,7 +211,9 @@ def cmd_market_smoke_test(session: Session, settings: Settings, count: int) -> i
             list(session.scalars(select(MarketPriceRaw).where(MarketPriceRaw.company_id == company.id)))
         )
         window = backfill_window(company.listing_date)
-        _ingest_one_ticker(session, selector, settings, company.ticker, run.run_uuid, rate_limiter, breaker, window)
+        _ingest_one_ticker(
+            session, selector, settings, company.ticker, run.run_uuid, rate_limiter, breaker, window
+        )
         session.commit()
         count_after = len(
             list(session.scalars(select(MarketPriceRaw).where(MarketPriceRaw.company_id == company.id)))
@@ -196,9 +222,13 @@ def cmd_market_smoke_test(session: Session, settings: Settings, count: int) -> i
             idempotent_ok = False
             print(f"  IDEMPOTENCY FAILURE for {company.ticker}: {count_before} -> {count_after} rows")
 
-    _finish_pipeline_run(session, run, total_written, total_failed, None if idempotent_ok else "idempotency check failed")
+    _finish_pipeline_run(
+        session, run, total_written, total_failed, None if idempotent_ok else "idempotency check failed"
+    )
 
-    print(f"\nSmoke test summary: {len(companies)} tickers, {total_written} rows written, idempotent={idempotent_ok}")
+    print(
+        f"\nSmoke test summary: {len(companies)} tickers, {total_written} rows written, idempotent={idempotent_ok}"
+    )
     return 0 if idempotent_ok and total_failed == 0 else 1
 
 
@@ -218,7 +248,7 @@ def cmd_market_backfill(
         # Plain ticker-ordered slice, not the spread sampling _select_companies
         # does for smoke tests -- used to chunk a full-universe backfill into
         # pieces that each finish within a single process run.
-        all_companies = list(session.scalars(select(Company).order_by(Company.ticker)))
+        all_companies = list(session.scalars(_equity_companies_stmt()))
         companies = all_companies[offset : offset + limit] if limit is not None else all_companies[offset:]
     else:
         companies = _select_companies(session, count or 50)
@@ -249,14 +279,16 @@ def cmd_market_backfill(
         total_written += written
 
     _finish_pipeline_run(session, run, total_written, total_failed, None)
-    print(f"\nBackfill summary: {len(companies)} tickers, {total_written} rows written, {total_failed} failed")
+    print(
+        f"\nBackfill summary: {len(companies)} tickers, {total_written} rows written, {total_failed} failed"
+    )
     return 0 if total_failed == 0 else 1
 
 
 def cmd_market_update(session: Session, settings: Settings) -> int:
     run = _start_pipeline_run(session, "market_update")
     selector = build_selector(settings)
-    companies = list(session.scalars(select(Company).order_by(Company.ticker)))
+    companies = list(session.scalars(_equity_companies_stmt()))
     rate_limiter = RateLimiter(settings.ohlcv_request_delay_seconds)
     breaker = CircuitBreaker(failure_threshold=10)
     total_written = 0
@@ -301,14 +333,20 @@ def cmd_corporate_actions_sync(session: Session, settings: Settings, ticker: str
         return 1
 
     start, end = backfill_window(None)
-    outcome = ingest_corporate_actions(session, provider, ticker, start, end, max_retries=settings.ohlcv_max_retries)
+    outcome = ingest_corporate_actions(
+        session, provider, ticker, start, end, max_retries=settings.ohlcv_max_retries
+    )
     session.commit()
-    _finish_pipeline_run(session, run, outcome.records_written, 0 if not outcome.skipped_reason else 1, outcome.skipped_reason)
+    _finish_pipeline_run(
+        session, run, outcome.records_written, 0 if not outcome.skipped_reason else 1, outcome.skipped_reason
+    )
 
     if outcome.skipped_reason:
         print(f"FAILED: {outcome.skipped_reason}")
         return 1
-    print(f"{ticker}: fetched={outcome.records_fetched} written={outcome.records_written} (provider={provider.provider_name})")
+    print(
+        f"{ticker}: fetched={outcome.records_fetched} written={outcome.records_written} (provider={provider.provider_name})"
+    )
     return 0
 
 
@@ -349,7 +387,9 @@ def cmd_market_reconcile(session: Session, settings: Settings, count: int) -> in
         # check"), not a reason to silently drop the row.
         try:
             verification = twelve_data.get_ohlcv(company.ticker, start, end)
-            verification_bar = verification.value[-1] if verification.is_usable() and verification.value else None
+            verification_bar = (
+                verification.value[-1] if verification.is_usable() and verification.value else None
+            )
         except Exception as exc:  # noqa: BLE001 -- verification failure must still be recorded, not crash the batch
             print(f"{company.ticker}: verification provider unavailable ({exc})")
             verification_bar = None
@@ -366,7 +406,9 @@ def cmd_market_reconcile(session: Session, settings: Settings, count: int) -> in
             verification_volume=verification_bar.volume if verification_bar else None,
         )
         session.commit()
-        print(f"{company.ticker}: status={record.status} primary={record.primary_close} verification={record.verification_close}")
+        print(
+            f"{company.ticker}: status={record.status} primary={record.primary_close} verification={record.verification_close}"
+        )
         checked += 1
 
     _finish_pipeline_run(session, run, checked, 0, None)
@@ -374,11 +416,13 @@ def cmd_market_reconcile(session: Session, settings: Settings, count: int) -> in
     return 0 if checked > 0 else 1
 
 
-def cmd_market_build_clean(session: Session, settings: Settings, offset: int = 0, limit: int | None = None) -> int:
+def cmd_market_build_clean(
+    session: Session, settings: Settings, offset: int = 0, limit: int | None = None
+) -> int:
     """Preprocesses market_prices_raw -> market_prices_clean (spec section
     6.1) for every company that has raw data, or a chunked slice of them."""
     run = _start_pipeline_run(session, "market_build_clean")
-    all_companies = list(session.scalars(select(Company).order_by(Company.ticker)))
+    all_companies = list(session.scalars(_equity_companies_stmt()))
     companies = all_companies[offset : offset + limit] if limit is not None else all_companies[offset:]
     if not companies:
         _finish_pipeline_run(session, run, 0, 0, "no companies in database")
@@ -395,7 +439,9 @@ def cmd_market_build_clean(session: Session, settings: Settings, offset: int = 0
         if outcome.skipped_reason:
             total_skipped += 1
             continue
-        print(f"{company.ticker}: processed={outcome.rows_processed} written={outcome.rows_written} outliers={outcome.outliers_flagged}")
+        print(
+            f"{company.ticker}: processed={outcome.rows_processed} written={outcome.rows_written} outliers={outcome.outliers_flagged}"
+        )
         total_written += outcome.rows_written
         total_outliers += outcome.outliers_flagged
 
@@ -407,12 +453,14 @@ def cmd_market_build_clean(session: Session, settings: Settings, offset: int = 0
     return 0
 
 
-def cmd_market_fetch_marketcap(session: Session, settings: Settings, offset: int = 0, limit: int | None = None) -> int:
+def cmd_market_fetch_marketcap(
+    session: Session, settings: Settings, offset: int = 0, limit: int | None = None
+) -> int:
     """Fetches shares_outstanding via Yahoo Finance fast_info for a slice
     of companies -- network-bound, chunk this like backfill for a
     full-universe run."""
     run = _start_pipeline_run(session, "market_fetch_marketcap")
-    all_companies = list(session.scalars(select(Company).order_by(Company.ticker)))
+    all_companies = list(session.scalars(_equity_companies_stmt()))
     companies = all_companies[offset : offset + limit] if limit is not None else all_companies[offset:]
     if not companies:
         _finish_pipeline_run(session, run, 0, 0, "no companies in database")
@@ -448,9 +496,13 @@ def cmd_market_top_marketcap(session: Session, count: int) -> int:
     market_cap = shares_outstanding * latest stored close."""
     ranked = rank_companies_by_market_cap(session, count)
     if not ranked:
-        print("No companies have both shares_outstanding and price data yet -- run `market fetch-marketcap` first.")
+        print(
+            "No companies have both shares_outstanding and price data yet -- run `market fetch-marketcap` first."
+        )
         return 1
     for i, r in enumerate(ranked, 1):
-        print(f"{i:>3}. {r.ticker:<8} {r.company_name:<40} mcap=Rp{r.market_cap:,.0f} (close={r.latest_close} @ {r.price_date})")
+        print(
+            f"{i:>3}. {r.ticker:<8} {r.company_name:<40} mcap=Rp{r.market_cap:,.0f} (close={r.latest_close} @ {r.price_date})"
+        )
     print(",".join(r.ticker for r in ranked))
     return 0

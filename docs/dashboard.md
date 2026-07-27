@@ -21,8 +21,9 @@ route, not assumed from memory.
 
 ## Routes
 
-- `/` -- company list (947 real companies), `q` search by ticker/name
-  substring, offset-based pagination.
+- `/` -- company list (942 real equities by default), `q` search by
+  ticker/name substring, offset-based pagination. The API can expose all
+  947 master records via `asset_type=all`.
 - `/companies/[ticker]` -- calls `/snapshot` and `/news`: recommendation
   (label, confidence, entry zone, guardrails incl. the new
   `recent_negative_sentiment` one), valuation (bear/base/bull/

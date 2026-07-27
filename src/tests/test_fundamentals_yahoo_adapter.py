@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import datetime as dt
 
-from src.data_sources.fundamentals.taxonomy import ACCOUNT_CODE_SECTIONS
+from src.data_sources.fundamentals.taxonomy import CORE_ACCOUNT_CODES
 from src.data_sources.fundamentals.yahoo_finance import (
     _ANNUAL_LAG_DAYS,
     _QUARTERLY_LAG_DAYS,
@@ -19,7 +19,7 @@ def test_every_yahoo_field_has_a_taxonomy_section():
     # Would already fail at import time via the module-level assert, but
     # spelled out here so a future taxonomy/field-map drift shows up as a
     # named, discoverable test failure rather than only an import crash.
-    assert set(_YAHOO_FIELD_NAMES) == set(ACCOUNT_CODE_SECTIONS)
+    assert set(_YAHOO_FIELD_NAMES) == set(CORE_ACCOUNT_CODES)
 
 
 def test_fiscal_period_annual():

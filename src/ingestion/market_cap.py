@@ -26,7 +26,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from src.data_sources.market.yahoo_finance import default_yahoo_symbol
-from src.database.models.company import Company
+from src.database.models.company import AssetType, Company
 from src.database.models.market import MarketPriceClean
 
 
@@ -77,7 +77,11 @@ def rank_companies_by_market_cap(session: Session, top_n: int) -> list[RankedCom
     stored shares_outstanding and at least one market_prices_clean row,
     using each company's own most recent close."""
     companies = session.scalars(
-        select(Company).where(Company.shares_outstanding.is_not(None))
+        select(Company).where(
+            Company.shares_outstanding.is_not(None),
+            Company.asset_type == AssetType.EQUITY.value,
+            Company.status == "active",
+        )
     ).all()
 
     ranked: list[RankedCompany] = []

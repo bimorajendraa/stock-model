@@ -24,7 +24,8 @@ from src.ingestion.company_sync import sync_companies
 
 pytestmark = pytest.mark.integration
 
-_TEST_TICKERS = ["ZZZA", "ZZZB"]
+_EQUITY_TICKERS = ["ZZZA", "ZZZB"]
+_TEST_TICKERS = [*_EQUITY_TICKERS, "ZZZIDX"]
 
 
 class _FakeProvider(MarketDataProvider):
@@ -80,7 +81,19 @@ def test_sync_creates_new_companies(db_session):
     assert outcome.skipped_reason is None
 
     rows = db_session.scalars(select(Company).where(Company.ticker.in_(_TEST_TICKERS))).all()
-    assert {r.ticker for r in rows} == set(_TEST_TICKERS)
+    assert {r.ticker for r in rows} == set(_EQUITY_TICKERS)
+    assert all(r.asset_type == "equity" for r in rows)
+
+
+def test_sync_infers_index_asset_type_from_provider_name(db_session):
+    provider = _FakeProvider([CompanyRecord("ZZZIDX", "Test Benchmark Index")])
+    outcome = sync_companies(db_session, provider)
+    db_session.commit()
+
+    company = db_session.scalar(select(Company).where(Company.ticker == "ZZZIDX"))
+    assert outcome.companies_created == 1
+    assert company is not None
+    assert company.asset_type == "index"
 
 
 def test_sync_updates_existing_company_name_without_deleting_others(db_session):

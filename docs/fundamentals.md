@@ -1,12 +1,11 @@
 # Fundamentals (financial statements, Tahap 3.3 + 8 branches)
 
-Status: one adapter implemented and verified against real data --
-`YahooFinanceFundamentalsAdapter` (`src/data_sources/fundamentals/yahoo_finance.py`),
-same `research_only` status as the existing Yahoo Finance OHLCV adapter --
-plus deterministic ratio computation (spec section 8) on top of it
-(`src/features/fundamentals/{ratios,pipeline}.py`). See "Ratio computation"
-below for what's covered and the real bug this step's own follow-up audit
-caught.
+Status: two adapters and a priority selector are implemented. An authorized
+local IDX XBRL archive is preferred per fiscal period; Yahoo Finance remains a
+`research_only` fallback. Deterministic ratios and bank/mining disclosed
+metrics run on the standardized facts. The Yahoo path is verified against real
+data; the official path is fixture/integration tested but no authorized archive
+is configured in the current database. See `docs/official_xbrl_archive.md`.
 
 ## What was actually investigated (2026-07-25)
 
@@ -29,7 +28,7 @@ and are genuinely discrete-quarter figures, not year-to-date cumulative
 (cross-checked: BBCA's four 2025 quarterly net-income figures sum to
 approximately its FY2025 annual figure).
 
-## Known limitation: `available_at` is an estimate, not a filed date
+## `available_at`: official publication time or disclosed estimate
 
 This is the most important caveat in this document, so it's stated
 plainly: **yfinance does not expose the real public-disclosure date for
@@ -37,8 +36,8 @@ any statement** -- only the fiscal `period_end`. Spec section 3.3 forbids
 treating those as the same date (a Q4 statement is not "available" the
 moment the quarter ends -- it isn't filed for weeks or months).
 
-Since no real filing-date source is integrated yet, `available_at` here is
-a **conservative estimate**:
+For Yahoo fallback statements, `available_at` remains a **conservative
+estimate**:
 
 - Annual statements: `period_end + 120 days`
 - Quarterly statements: `period_end + 60 days`
@@ -53,21 +52,24 @@ conservatively under-using very recent data, never leakage. The estimate
 basis is recorded in `financial_statements_raw.raw_payload` so nothing
 downstream mistakes it for a real filed date.
 
-**If a real filing-date source is ever integrated (e.g. IDX's own
-disclosure system, or a vendor that captures actual submission
-timestamps), this estimate must be treated as inferior and replaced, not
-merged or averaged with it.**
+For an IDX archive statement, the manifest's timezone-aware official
+`published_at` is used directly and stored with
+`available_at_basis=official_idx_publication_timestamp` plus the official
+document URL/reference. The priority selector chooses official XBRL for a
+matching period and prevents a fallback statement from overwriting it. Mixed
+history is therefore explicit: an estimated Yahoo date is never presented as
+an official disclosure timestamp.
 
 ## Standardized account taxonomy
 
-`src/data_sources/fundamentals/taxonomy.py` defines 30 provider-agnostic
-`account_code`s across `income_statement`/`balance_sheet`/`cash_flow`,
-covering the inputs spec section 8's core ratios need (margins, ROE/ROA,
-current ratio, DER, EPS/PER/PBV) -- deliberately a small, high-value
-subset, not an exhaustive taxonomy. The Yahoo adapter's field-name mapping
-(`_YAHOO_FIELD_NAMES` in `yahoo_finance.py`) is asserted at import time to
-cover exactly this taxonomy, so a drift between the two fails loudly, not
-silently.
+`src/data_sources/fundamentals/taxonomy.py` defines 30 provider-agnostic core
+`account_code`s across income statement/balance sheet/cash flow plus optional
+industry codes. Banking facts cover loans, gross/net NPL, earning assets,
+regulatory capital, risk-weighted assets, deposits, and reported NPL/NIM/CAR.
+Mining facts cover proved/probable reserves, annual production, cash cost, and
+stripping ratio. The Yahoo adapter is asserted against the 30-code core only;
+official filings may add applicable industry facts without penalizing core
+statement completeness.
 
 A company's statement that doesn't report a given account_code (e.g. a
 bank's `cost_of_revenue`) simply has no row for it -- never backfilled
@@ -210,17 +212,17 @@ by construction and must use a disposable fixture company instead
 (`src/tests/test_technical_pipeline.py` and `test_market_cap.py` already
 followed this pattern for their own tables; this file didn't, until now).
 
-## What's not built yet
+## Remaining gaps
 
-- **A second fundamentals provider** (spec section 3.3 implies redundancy
-  the same way market data has Twelve Data + Yahoo Finance). Sectors.app's
-  `/v2/companies/` screener (see `docs/data_sources.md`) already exposes a
-  fundamentals-adjacent surface and is a reasonable next candidate --
-  deferred because it has no free tier, same reason it's unused for market
-  data reconciliation.
-- **XBRL/real-filing-date source** -- see the `available_at` limitation
-  above. Would also resolve `auditor_opinion`/`going_concern_flag`
-  (currently always `None`/`False` -- yfinance doesn't expose either).
+- **Official data coverage** -- the XBRL adapter exists, but an authorized IDX
+  manifest/archive must still be obtained and audited before official facts or
+  real filing dates exist in the production database.
+- **Issuer taxonomy coverage** -- real XBRL namespaces and issuer extensions
+  vary. Unknown facts are intentionally ignored until explicitly mapped and
+  tested; bank/mining metrics stay absent when inputs are missing.
+- **Independent fallback redundancy** -- Yahoo is not a licensed production
+  filing source. A licensed structured provider would improve coverage for
+  periods absent from the official archive.
 - **Feeding these features into the Tahap 4 ML pipeline** --
   `docs/model_methodology.md` documents that the current baselines use
   technical features only; fundamentals-derived features are a candidate

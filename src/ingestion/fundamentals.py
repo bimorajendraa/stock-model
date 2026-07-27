@@ -24,7 +24,7 @@ from sqlalchemy.orm import Session
 
 from src.data_sources.base import ProviderUnavailableError, SourceDescriptor
 from src.data_sources.fundamentals.base import FundamentalsProvider
-from src.data_sources.fundamentals.taxonomy import ACCOUNT_CODE_SECTIONS
+from src.data_sources.fundamentals.taxonomy import ACCOUNT_CODE_SECTIONS, CORE_ACCOUNT_CODES
 from src.database.models.company import Company
 from src.database.models.fundamentals import FinancialStatementItem, FinancialStatementRaw
 from src.database.models.mixins import QualityStatus
@@ -114,18 +114,31 @@ def ingest_fundamentals(
         outcome.skipped_reason = "no usable statements after fetching each fiscal period"
         return outcome
 
-    source = _get_or_create_source(session, documents[0].source, category="fundamentals")
-
-    existing_ids = session.scalars(
-        select(FinancialStatementRaw.id).where(FinancialStatementRaw.company_id == company.id)
-    ).all()
-    if existing_ids:
-        session.execute(delete(FinancialStatementItem).where(FinancialStatementItem.statement_id.in_(existing_ids)))
-        session.execute(delete(FinancialStatementRaw).where(FinancialStatementRaw.company_id == company.id))
-
     for result in documents:
         doc = result.value
-        completeness = len(doc.line_items) / len(ACCOUNT_CODE_SECTIONS)
+        source = _get_or_create_source(session, result.source, category="fundamentals")
+        existing_rows = list(
+            session.scalars(
+                select(FinancialStatementRaw).where(
+                    FinancialStatementRaw.company_id == company.id,
+                    FinancialStatementRaw.statement_type == doc.statement_type,
+                    FinancialStatementRaw.fiscal_period == doc.fiscal_period,
+                )
+            )
+        )
+        # Never let a fallback/estimated document overwrite an official
+        # XBRL filing for the same natural statement identity.
+        if doc.source_format != "xbrl" and any(row.source_format == "xbrl" for row in existing_rows):
+            continue
+        existing_ids = [row.id for row in existing_rows]
+        if existing_ids:
+            session.execute(
+                delete(FinancialStatementItem).where(FinancialStatementItem.statement_id.in_(existing_ids))
+            )
+            session.execute(delete(FinancialStatementRaw).where(FinancialStatementRaw.id.in_(existing_ids)))
+
+        core_items = sum(1 for code in doc.line_items if code in CORE_ACCOUNT_CODES)
+        completeness = core_items / len(CORE_ACCOUNT_CODES)
         quality_status = QualityStatus.VALID if completeness >= _MIN_COMPLETENESS_RATIO else QualityStatus.INSUFFICIENT
 
         raw = FinancialStatementRaw(
@@ -148,8 +161,10 @@ def ingest_fundamentals(
             is_restated=False,
             quality_status=quality_status,
             raw_payload={
-                "available_at_basis": f"estimated_period_end_plus_lag ({provider.provider_name})",
+                "available_at_basis": doc.available_at_basis or f"provider_timestamp ({provider.provider_name})",
+                "filing_reference": doc.filing_reference,
                 "n_items": len(doc.line_items),
+                "n_core_items": core_items,
                 "completeness_ratio": round(completeness, 4),
             },
         )
@@ -172,7 +187,7 @@ def ingest_fundamentals(
                     period_start=result.period_start,
                     period_end=result.period_end,
                     currency=doc.currency,
-                    unit=doc.scale,
+                    unit=doc.line_item_units.get(account_code, doc.scale),
                     is_restated=False,
                     quality_status=quality_status,
                 )

@@ -46,6 +46,23 @@ class Settings(BaseSettings):
     bps_api_key: str | None = Field(default=None, alias="BPS_API_KEY")
     fred_api_key: str | None = Field(default=None, alias="FRED_API_KEY")
 
+    # --- Fundamentals / official filing archive ---
+    fundamentals_provider: str = Field(default="auto", alias="FUNDAMENTALS_PROVIDER")
+    # auto | idx_xbrl | yahoo_finance. IDX's site blocks automated fetches;
+    # this points at an authorized/manual official-XBRL archive manifest.
+    idx_xbrl_manifest_path: str | None = Field(default=None, alias="IDX_XBRL_MANIFEST_PATH")
+
+    # --- Deterministic DCF assumptions (unset means DCF is not claimed) ---
+    dcf_discount_rate: float | None = Field(default=None, alias="DCF_DISCOUNT_RATE")
+    dcf_near_term_growth_rate: float | None = Field(default=None, alias="DCF_NEAR_TERM_GROWTH_RATE")
+    dcf_terminal_growth_rate: float | None = Field(default=None, alias="DCF_TERMINAL_GROWTH_RATE")
+    dcf_projection_years: int = Field(default=5, alias="DCF_PROJECTION_YEARS")
+
+    # --- News service ---
+    news_usage_mode: str = Field(default="research", alias="NEWS_USAGE_MODE")
+    news_schedule_hour: int = Field(default=6, alias="NEWS_SCHEDULE_HOUR")
+    news_schedule_minute: int = Field(default=0, alias="NEWS_SCHEDULE_MINUTE")
+
     # --- Market data provider selection (spec: multi-provider capability system) ---
     market_data_provider: str = Field(default="auto", alias="MARKET_DATA_PROVIDER")  # "auto" | "twelve_data" | "yahoo_finance"
     market_data_usage_mode: str = Field(default="research", alias="MARKET_DATA_USAGE_MODE")  # "research" | "production"
